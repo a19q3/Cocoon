@@ -21,20 +21,60 @@ readonly = [
   "/app/assets"
 ]
 
-[capabilities]
-allow = [
-  "file:/app/**",
-  "log:/hello-service",
-  "time:/readonly",
-  "rand:/readonly"
-]
+[[permission]]
+scheme = "file"
+action = "readwrite"
+target = "/app/**"
 
-deny = [
-  "file:/home/**",
-  "file:/etc/secrets/**",
-  "tcp:/connect/*",
-  "device:/**"
-]
+[[permission]]
+scheme = "log"
+action = "write"
+target = "hello-service"
+
+[[permission]]
+scheme = "time"
+action = "read"
+target = "readonly"
+
+[[permission]]
+scheme = "rand"
+action = "read"
+target = "readonly"
+
+[[permission]]
+effect = "deny"
+scheme = "file"
+action = "readwrite"
+target = "/home/**"
+
+[[permission]]
+effect = "deny"
+scheme = "file"
+action = "readwrite"
+target = "/etc/secrets/**"
+
+[[permission]]
+effect = "deny"
+scheme = "tcp"
+action = "connect"
+target = "*"
+
+[[permission]]
+effect = "deny"
+scheme = "device"
+action = "manage"
+target = "/**"
+
+[[preopen]]
+scheme = "file"
+host_path = "/pkg/cocoon/capsules/hello-service/current"
+guest_path = "/app"
+rights = ["read", "execute"]
+
+[[scheme]]
+name = "log"
+visibility = "readwrite"
+target = "service-log"
 
 [network]
 default = "deny"

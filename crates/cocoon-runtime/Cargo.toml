@@ -6,7 +6,11 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+cocoon-bundle = { path = "../cocoon-bundle" }
 cocoon-core = { path = "../cocoon-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
-tar = { workspace = true }
-flate2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

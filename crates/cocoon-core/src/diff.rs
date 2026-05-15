@@ -1,19 +1,19 @@
-use crate::capability::{AccessMode, Capability};
+use crate::capability::{PermissionAction, PermissionRule};
 use crate::manifest::CapsuleManifest;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionDiff {
-    pub added: Vec<Capability>,
-    pub removed: Vec<Capability>,
-    pub modified: Vec<(Capability, Capability)>,
+    pub added: Vec<PermissionRule>,
+    pub removed: Vec<PermissionRule>,
+    pub modified: Vec<(PermissionRule, PermissionRule)>,
 }
 
 impl PermissionDiff {
     pub fn empty() -> Self {
         Self {
-            added: vec![],
-            removed: vec![],
-            modified: vec![],
+            added: Vec::new(),
+            removed: Vec::new(),
+            modified: Vec::new(),
         }
     }
 
@@ -22,40 +22,36 @@ impl PermissionDiff {
     }
 }
 
-pub fn diff_capabilities(old: &CapsuleManifest, new: &CapsuleManifest) -> crate::Result<PermissionDiff> {
-    let old_caps: Vec<Capability> = old
-        .capabilities
-        .allow
-        .iter()
-        .map(|s| s.parse())
-        .collect::<crate::Result<Vec<_>>>()?;
-    let new_caps: Vec<Capability> = new
-        .capabilities
-        .allow
-        .iter()
-        .map(|s| s.parse())
-        .collect::<crate::Result<Vec<_>>>()?;
+pub fn diff_permissions(
+    old: &CapsuleManifest,
+    new: &CapsuleManifest,
+) -> crate::Result<PermissionDiff> {
+    let old_permissions = sorted_allowed_permissions(old);
+    let new_permissions = sorted_allowed_permissions(new);
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut modified = Vec::new();
 
-    let mut added = vec![];
-    let mut removed = vec![];
-    let mut modified = vec![];
+    for new_permission in &new_permissions {
+        if old_permissions.contains(new_permission) {
+            continue;
+        }
 
-    for c in &new_caps {
-        if !old_caps.contains(c) {
-            // Check if same scheme+resource but different access
-            if let Some(o) = old_caps.iter().find(|o| o.scheme == c.scheme && o.resource == c.resource) {
-                modified.push((o.clone(), c.clone()));
-            } else {
-                added.push(c.clone());
-            }
+        if let Some(old_permission) = old_permissions
+            .iter()
+            .find(|old_permission| same_target(old_permission, new_permission))
+        {
+            modified.push((old_permission.clone(), new_permission.clone()));
+        } else {
+            added.push(new_permission.clone());
         }
     }
 
-    for c in &old_caps {
-        if !new_caps.contains(c) {
-            if !modified.iter().any(|(o, _)| o == c) {
-                removed.push(c.clone());
-            }
+    for old_permission in &old_permissions {
+        if !new_permissions.contains(old_permission)
+            && !modified.iter().any(|(old, _)| old == old_permission)
+        {
+            removed.push(old_permission.clone());
         }
     }
 
@@ -64,6 +60,26 @@ pub fn diff_capabilities(old: &CapsuleManifest, new: &CapsuleManifest) -> crate:
         removed,
         modified,
     })
+}
+
+pub fn diff_capabilities(
+    old: &CapsuleManifest,
+    new: &CapsuleManifest,
+) -> crate::Result<PermissionDiff> {
+    diff_permissions(old, new)
+}
+
+fn sorted_allowed_permissions(manifest: &CapsuleManifest) -> Vec<PermissionRule> {
+    let mut permissions = manifest
+        .allowed_permissions()
+        .cloned()
+        .collect::<Vec<PermissionRule>>();
+    permissions.sort();
+    permissions
+}
+
+fn same_target(old: &PermissionRule, new: &PermissionRule) -> bool {
+    old.scheme == new.scheme && old.target == new.target
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -75,30 +91,35 @@ pub enum Severity {
 }
 
 pub fn severity_of_diff(diff: &PermissionDiff) -> Vec<(Severity, String)> {
-    let mut out = vec![];
-    for c in &diff.added {
-        let sev = capability_severity(c);
-        let msg = format!("new capability: {}", c);
-        out.push((sev, msg));
+    let mut out = Vec::new();
+
+    for permission in &diff.added {
+        let severity = permission_severity(permission);
+        out.push((severity, format!("new permission: {permission}")));
     }
+
     for (old, new) in &diff.modified {
-        let sev = if access_expanded(&old.access, &new.access) {
-            capability_severity(new)
+        let severity = if action_expanded(old.action, new.action) {
+            permission_severity(new)
         } else {
             Severity::Low
         };
-        let msg = format!("modified capability: {} -> {}", old, new);
-        out.push((sev, msg));
+        out.push((severity, format!("modified permission: {old} -> {new}")));
     }
+
     out.sort_by(|a, b| b.0.cmp(&a.0));
     out
 }
 
-fn capability_severity(c: &Capability) -> Severity {
-    match c.scheme.as_str() {
+fn permission_severity(permission: &PermissionRule) -> Severity {
+    match permission.scheme.as_str() {
+        "device" | "kernel" | "sudo" | "sys" => Severity::Critical,
         "tcp" | "udp" | "network" => Severity::High,
-        "device" => Severity::Critical,
-        "file" if c.resource.contains("/etc/secrets") || c.resource.contains("/home") => {
+        "proc" | "memory" => Severity::High,
+        "file"
+            if permission.target.as_str().contains("/etc/secrets")
+                || permission.target.as_str().contains("/home") =>
+        {
             Severity::High
         }
         "file" => Severity::Medium,
@@ -106,14 +127,20 @@ fn capability_severity(c: &Capability) -> Severity {
     }
 }
 
-fn access_expanded(old: &AccessMode, new: &AccessMode) -> bool {
-    match (old, new) {
-        (AccessMode::ReadOnly, AccessMode::ReadWrite) => true,
-        (AccessMode::ReadOnly, AccessMode::Any) => true,
-        (AccessMode::ReadWrite, AccessMode::Any) => true,
-        (AccessMode::Any, AccessMode::Any) => false,
-        (a, b) if a == b => false,
-        _ => true,
+fn action_expanded(old: PermissionAction, new: PermissionAction) -> bool {
+    action_rank(new) > action_rank(old)
+}
+
+fn action_rank(action: PermissionAction) -> u8 {
+    match action {
+        PermissionAction::Read => 1,
+        PermissionAction::Write => 2,
+        PermissionAction::Execute => 2,
+        PermissionAction::Connect => 3,
+        PermissionAction::Open => 3,
+        PermissionAction::Use => 3,
+        PermissionAction::ReadWrite => 4,
+        PermissionAction::Manage => 5,
     }
 }
 
@@ -123,39 +150,115 @@ mod tests {
 
     #[test]
     fn diff_empty() {
-        let m = CapsuleManifest::from_toml(r#"
+        let manifest = CapsuleManifest::from_toml(
+            r#"
 [capsule]
 name = "a"
-version = "1"
+version = "1.0.0"
+
 [entry]
-cmd = "/bin/a"
-"#).unwrap();
-        let d = diff_capabilities(&m, &m).unwrap();
-        assert!(d.is_empty());
+cmd = "/app/bin/a"
+"#,
+        )
+        .unwrap();
+        let diff = diff_permissions(&manifest, &manifest).unwrap();
+
+        assert!(diff.is_empty());
     }
 
     #[test]
-    fn diff_adds_capability() {
-        let old = CapsuleManifest::from_toml(r#"
+    fn diff_adds_permission() {
+        let old = CapsuleManifest::from_toml(
+            r#"
 [capsule]
 name = "a"
-version = "1"
+version = "1.0.0"
+
 [entry]
-cmd = "/bin/a"
-[capabilities]
-allow = ["file:/app/**"]
-"#).unwrap();
-        let new = CapsuleManifest::from_toml(r#"
+cmd = "/app/bin/a"
+
+[[permission]]
+scheme = "file"
+action = "read"
+target = "/app/**"
+"#,
+        )
+        .unwrap();
+        let new = CapsuleManifest::from_toml(
+            r#"
 [capsule]
 name = "a"
-version = "2"
+version = "2.0.0"
+
 [entry]
-cmd = "/bin/a"
-[capabilities]
-allow = ["file:/app/**", "tcp:/connect/*"]
-"#).unwrap();
-        let d = diff_capabilities(&old, &new).unwrap();
-        assert_eq!(d.added.len(), 1);
-        assert_eq!(d.added[0].scheme, "tcp");
+cmd = "/app/bin/a"
+
+[[permission]]
+scheme = "file"
+action = "read"
+target = "/app/**"
+
+[[permission]]
+scheme = "tcp"
+action = "connect"
+target = "api.example.com:443"
+"#,
+        )
+        .unwrap();
+        let diff = diff_permissions(&old, &new).unwrap();
+
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].scheme.as_str(), "tcp");
+    }
+
+    #[test]
+    fn deny_rules_do_not_create_permission_expansion() {
+        let old = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "a"
+version = "1.0.0"
+
+[entry]
+cmd = "/app/bin/a"
+"#,
+        )
+        .unwrap();
+        let new = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "a"
+version = "2.0.0"
+
+[entry]
+cmd = "/app/bin/a"
+
+[[permission]]
+effect = "deny"
+scheme = "tcp"
+action = "connect"
+target = "*"
+"#,
+        )
+        .unwrap();
+        let diff = diff_permissions(&old, &new).unwrap();
+
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn critical_for_device_permission() {
+        let diff = PermissionDiff {
+            added: vec![PermissionRule {
+                effect: crate::PermissionEffect::Allow,
+                scheme: crate::SchemeName::parse("device").unwrap(),
+                action: PermissionAction::Manage,
+                target: crate::PermissionTarget::parse("/").unwrap(),
+            }],
+            removed: Vec::new(),
+            modified: Vec::new(),
+        };
+
+        assert_eq!(severity_of_diff(&diff)[0].0, Severity::Critical);
     }
 }

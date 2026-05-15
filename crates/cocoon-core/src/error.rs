@@ -14,6 +14,9 @@ pub enum CocoonError {
     #[error("Invalid manifest: {0}")]
     InvalidManifest(String),
 
+    #[error("Permission parse error: {0}")]
+    PermissionParse(String),
+
     #[error("Capability parse error: {0}")]
     CapabilityParse(String),
 

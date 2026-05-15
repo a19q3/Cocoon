@@ -1,128 +1,114 @@
 # Cocoon Architecture
 
-## One-sentence
-
-> Cocoon packages Redox services into signed, capability-declared capsules with reproducible deployment, permission diffs, rollback metadata, and audit logs.
+> Cocoon packages Redox services into signed, capability-declared capsules with
+> reproducible deployment, permission diffs, rollback metadata, and audit logs.
 
 ## Overview
 
 ```text
 ┌─────────────────────────────────────────────┐
 │                cocoon CLI                    │
-│ build / verify / install / run / inspect     │
-│ diff-permissions / rollback / logs           │
+│ build / verify / inspect / diff-permissions │
 └──────────────────────┬──────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────┐
 │              Cocoon Core                     │
-│ manifest parser / validator / capability     │
-│ diff engine / bundle metadata / receipt       │
+│ typed manifest / permission AST / diff       │
+│ validation / hashes / shared errors          │
 └──────────────────────┬──────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────┐
 │              Cocoon Bundle                   │
-│ .cocoon archive / hash / signature / SBOM    │
-│ capsule filesystem / service manifest         │
+│ P0 tar.gz capsule / hashes / signature meta  │
+│ strict archive integrity verification        │
 └──────────────────────┬──────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────┐
 │          Cocoon Runtime on Redox             │
-│ namespace setup / scheme visibility / spawn   │
-│ logs / lifecycle / health / rollback          │
+│ verify / materialize / namespace / spawn     │
+│ receipts / logs / status / rollback          │
 └──────────────────────┬──────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────┐
 │                RedoxOS                       │
-│ schemes / namespaces / capabilities / pkg     │
+│ schemes / namespaces / fd capabilities / pkg │
 └─────────────────────────────────────────────┘
 ```
+
+## Native Runtime Contract
+
+Cocoon is not a Linux container abstraction. The runtime contract is:
+
+- Verify the capsule and normalized permission manifest before install.
+- Materialize the service payload into the Cocoon install tree.
+- Construct the Redox namespace and visible schemes for the service.
+- Spawn the service with preopened capability handles and audited stdio.
+
+P0 implements the cross-platform parts: typed manifest validation, bundle
+integrity verification, permission diffing, staged materialization, and install
+receipts. P0 defines and verifies capsule intent; it does not claim Redox
+runtime isolation. P1 adds Redox/QEMU namespace and spawn checks.
 
 ## Modules
 
 | Crate | Responsibility |
-|-------|---------------|
-| `cocoon-core` | manifest data structures, capability model, validation, permission diff, shared errors |
-| `cocoon-bundle` | `.cocoon` archive format, content hashing, signature metadata, bundle verification |
-| `cocoon-policy` | allow/deny capability rules, permission diff severity, update-time policy check |
-| `cocoon-cli` | developer/ops entrypoint: `build`, `verify`, `inspect`, `diff-permissions`, `install`, `run` |
-| `cocoon-runtime` | Redox-specific runtime: namespace/scheme setup, process spawn, logs, rollback |
-| `cocoon-testkit` | QEMU Redox integration harness, fixture generation, automated assertions |
-
-## Trust Boundary
-
-- **Trusted**: Cocoon runtime, verified capsule manifest, Redox namespace/capability enforcement
-- **Partially trusted**: capsule author, installed service binary
-- **Untrusted**: service runtime behaviour, network input, external bundle source
-
-Cocoon does not assume the service is benign; it enforces that the service can only access resources declared in the manifest.
-
-## Capsule Format
-
-```text
-hello.cocoon
-  ├── Cocoon.toml
-  ├── bin/
-  │   └── hello-service
-  ├── etc/
-  │   └── config.toml
-  ├── assets/
-  ├── manifest/
-  │   ├── hashes.json
-  │   ├── signature.json
-  │   └── sbom.json
-  └── receipts/
-      └── build-receipt.json
-```
+|-------|----------------|
+| `cocoon-core` | Domain types, manifest schema, permission rules, validation, diffing, hashes |
+| `cocoon-bundle` | P0 `.cocoon` archive creation, parsing, path safety, hash verification |
+| `cocoon-policy` | Permission diff severity and confirmation policy |
+| `cocoon-cli` | Developer entrypoint: `build`, `verify`, `inspect`, `diff-permissions` |
+| `cocoon-runtime` | Verified staged install, receipts, future Redox namespace/spawn runtime |
+| `cocoon-testkit` | Fixture helpers and future QEMU integration harness |
 
 ## Security Model
 
-### Permission Diff on Update
+- Trusted: Cocoon runtime, verified manifest, Redox namespace and fd capability enforcement.
+- Partially trusted: capsule author and installed service binary.
+- Untrusted: service runtime behavior, external network input, external bundle source.
 
-If a new version expands permissions, Cocoon must report severity and require confirmation:
+Permission diffing compares normalized typed permission rules. New allowed
+network, device, sys, sudo, memory, proc, or sensitive filesystem access is
+reported with severity; removed permissions are reductions and do not require
+confirmation.
+
+## Artifact Direction
+
+P0 keeps tar.gz because it is easy to build and inspect on macOS. The format is
+strictly verified: every payload path must be relative, unique, normalized, and
+covered by `manifest/hashes.json`.
+
+The Redox-native target is:
 
 ```text
-Permission expansion detected:
-  HIGH: new outbound network access
-  MEDIUM: new writable filesystem path
-
-Confirmation required.
+.cocoon envelope
+  ├── Cocoon.toml permission manifest
+  ├── policy metadata / receipts
+  └── pkgar payload
 ```
 
-### Receipt
-
-Every install/update/run produces a signed receipt:
-
-```json
-{
-  "event": "capsule_install",
-  "capsule": "hello-service",
-  "version": "0.1.0",
-  "manifest_hash": "blake3:...",
-  "bundle_hash": "blake3:...",
-  "capability_hash": "blake3:...",
-  "installed_at": "2026-05-15T00:00:00Z",
-  "previous_receipt": "blake3:..."
-}
-```
+That keeps Cocoon aligned with Redox package goals: atomic, minimal, secure, and
+relocatable payload installation.
 
 ## Phases
 
 ### P0: Capsule Format and macOS Developer Workflow
-- Workspace setup
-- `Cocoon.toml` schema
-- Manifest validation
-- `.cocoon` bundle build
-- `inspect`, `verify`, `diff-permissions` commands
-- `hello-service` example
-- macOS development guide
+
+- Typed `Cocoon.toml` schema.
+- Manifest and permission validation.
+- `.cocoon` build, inspect, verify, and permission diff.
+- Bundle tamper detection and strict unsigned mode.
+- Verified staged install and audit receipt generation.
+- macOS development and coding-style guides.
+- No claim of runtime isolation enforcement outside Redox.
 
 ### P1: Redox QEMU Runtime Smoke Test
-- Redox image overlay
-- `cocoon-runtime` minimal port
-- Install, run, collect logs
-- Basic namespace/scheme restriction experiment
-- QEMU smoke test via `cargo xtask redox-test`
+
+- Redox image overlay.
+- Runtime namespace/scheme visibility setup.
+- Process spawn with preopened handles.
+- Log capture and status reporting.
+- QEMU smoke test via `cargo xtask redox-test`.

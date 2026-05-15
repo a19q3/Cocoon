@@ -20,6 +20,10 @@ cargo run -p cocoon-cli -- verify target/capsules/hello-service.cocoon
 ## Docs
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [CAPSULE_FORMAT.md](docs/CAPSULE_FORMAT.md)
+- [SECURITY_MODEL.md](docs/SECURITY_MODEL.md)
+- [ROADMAP.md](docs/ROADMAP.md)
+- [CODING_STYLE.md](docs/CODING_STYLE.md)
 - [MACOS_DEV.md](docs/MACOS_DEV.md)
 
 ## License

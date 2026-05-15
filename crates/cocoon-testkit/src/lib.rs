@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Cocoon Testkit — QEMU Redox integration harness.
 //!
 //! P0 placeholder. P1 will implement:

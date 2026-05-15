@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Cocoon Runtime for RedoxOS.
 //!
 //! This crate is a placeholder for the Redox-specific runtime.

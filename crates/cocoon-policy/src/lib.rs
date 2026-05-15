@@ -1,4 +1,6 @@
-use cocoon_core::{Capability, PermissionDiff, Severity};
+#![forbid(unsafe_code)]
+
+use cocoon_core::{PermissionDiff, Severity};
 
 /// Check whether a permission diff requires confirmation under policy.
 pub fn requires_confirmation(diff: &PermissionDiff, policy: &UpdatePolicy) -> bool {
@@ -6,7 +8,9 @@ pub fn requires_confirmation(diff: &PermissionDiff, policy: &UpdatePolicy) -> bo
         return false;
     }
     let severities = cocoon_core::severity_of_diff(diff);
-    severities.iter().any(|(sev, _)| *sev >= policy.confirmation_threshold)
+    severities
+        .iter()
+        .any(|(sev, _)| *sev >= policy.confirmation_threshold)
 }
 
 #[derive(Debug, Clone)]
@@ -33,12 +37,16 @@ pub fn format_diff_report(diff: &PermissionDiff) -> String {
 
     let mut lines = vec!["Permission changes detected:".to_string()];
     for (sev, msg) in &severities {
-        lines.push(format!("  {:>8}: {}", format!("{:?}", sev).to_uppercase(), msg));
+        lines.push(format!(
+            "  {:>8}: {}",
+            format!("{:?}", sev).to_uppercase(),
+            msg
+        ));
     }
     if !diff.removed.is_empty() {
-        lines.push("\nRemoved capabilities:".to_string());
-        for cap in &diff.removed {
-            lines.push(format!("  - {}", cap));
+        lines.push("\nRemoved permissions:".to_string());
+        for permission in &diff.removed {
+            lines.push(format!("  - {}", permission));
         }
     }
     lines.join("\n")
@@ -51,9 +59,14 @@ mod tests {
     #[test]
     fn confirmation_for_high() {
         let diff = PermissionDiff {
-            added: vec!["tcp:/connect/*".parse().unwrap()],
-            removed: vec![],
-            modified: vec![],
+            added: vec![cocoon_core::PermissionRule {
+                effect: cocoon_core::PermissionEffect::Allow,
+                scheme: cocoon_core::SchemeName::parse("tcp").unwrap(),
+                action: cocoon_core::PermissionAction::Connect,
+                target: cocoon_core::PermissionTarget::parse("api.example.com:443").unwrap(),
+            }],
+            removed: Vec::new(),
+            modified: Vec::new(),
         };
         let policy = UpdatePolicy::default();
         assert!(requires_confirmation(&diff, &policy));
@@ -62,9 +75,14 @@ mod tests {
     #[test]
     fn no_confirmation_when_disabled() {
         let diff = PermissionDiff {
-            added: vec!["tcp:/connect/*".parse().unwrap()],
-            removed: vec![],
-            modified: vec![],
+            added: vec![cocoon_core::PermissionRule {
+                effect: cocoon_core::PermissionEffect::Allow,
+                scheme: cocoon_core::SchemeName::parse("tcp").unwrap(),
+                action: cocoon_core::PermissionAction::Connect,
+                target: cocoon_core::PermissionTarget::parse("api.example.com:443").unwrap(),
+            }],
+            removed: Vec::new(),
+            modified: Vec::new(),
         };
         let policy = UpdatePolicy {
             permission_expansion_requires_confirmation: false,

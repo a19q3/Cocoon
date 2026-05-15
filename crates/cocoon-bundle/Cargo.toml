@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 cocoon-core = { path = "../cocoon-core" }
 serde = { workspace = true }
-serde_json = "1"
+serde_json = { workspace = true }
 blake3 = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }

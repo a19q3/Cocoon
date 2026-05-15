@@ -1,92 +1,130 @@
+use crate::{PermissionTarget, SchemeName};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct Capability {
-    pub scheme: String,
-    pub resource: String,
-    pub access: AccessMode,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionRule {
+    #[serde(default)]
+    pub effect: PermissionEffect,
+    pub scheme: SchemeName,
+    pub action: PermissionAction,
+    pub target: PermissionTarget,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum AccessMode {
-    ReadOnly,
-    ReadWrite,
-    Execute,
-    Connect,
-    Any,
+impl PermissionRule {
+    pub fn is_allow(&self) -> bool {
+        self.effect == PermissionEffect::Allow
+    }
+
+    pub fn normalized_key(&self) -> String {
+        format!(
+            "{}:{}:{}:{}",
+            self.effect, self.scheme, self.action, self.target
+        )
+    }
 }
 
-impl FromStr for Capability {
+impl fmt::Display for PermissionRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} {} {} {}",
+            self.effect, self.scheme, self.action, self.target
+        )
+    }
+}
+
+impl FromStr for PermissionRule {
     type Err = crate::CocoonError;
 
-    fn from_str(s: &str) -> crate::Result<Self> {
-        let parts: Vec<&str> = s.splitn(2, ':').collect();
-        if parts.len() != 2 {
-            return Err(crate::CocoonError::CapabilityParse(format!(
-                "invalid capability syntax: {}",
-                s
+    fn from_str(raw: &str) -> crate::Result<Self> {
+        let Some((scheme, target)) = raw.split_once(':') else {
+            return Err(crate::CocoonError::PermissionParse(format!(
+                "invalid legacy permission syntax: {raw}"
             )));
-        }
-        let scheme = parts[0].to_string();
-        let rest = parts[1];
-
-        let (access, resource) = if let Some(pos) = rest.find('/') {
-            let mode = &rest[..pos];
-            let res = &rest[pos..];
-            (parse_access(mode)?, res.to_string())
-        } else {
-            (AccessMode::Any, rest.to_string())
         };
+        let scheme = SchemeName::parse(scheme)?;
+        let action = default_action_for_scheme(scheme.as_str());
 
-        Ok(Capability {
+        Ok(Self {
+            effect: PermissionEffect::Allow,
             scheme,
-            resource,
-            access,
+            action,
+            target: PermissionTarget::parse(target)?,
         })
     }
 }
 
-fn parse_access(s: &str) -> crate::Result<AccessMode> {
-    match s {
-        "readonly" => Ok(AccessMode::ReadOnly),
-        "readwrite" => Ok(AccessMode::ReadWrite),
-        "execute" => Ok(AccessMode::Execute),
-        "connect" => Ok(AccessMode::Connect),
-        "" => Ok(AccessMode::Any),
-        _ => Err(crate::CocoonError::CapabilityParse(format!(
-            "unknown access mode: {}",
-            s
-        ))),
-    }
+pub type CapabilityRule = PermissionRule;
+pub type Capability = PermissionRule;
+
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionEffect {
+    #[default]
+    Allow,
+    Deny,
 }
 
-impl std::fmt::Display for Capability {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let access = match self.access {
-            AccessMode::ReadOnly => "readonly",
-            AccessMode::ReadWrite => "readwrite",
-            AccessMode::Execute => "execute",
-            AccessMode::Connect => "connect",
-            AccessMode::Any => "",
-        };
-        if access.is_empty() {
-            write!(f, "{}:{}", self.scheme, self.resource)
-        } else {
-            write!(f, "{}:{}{}", self.scheme, access, self.resource)
-        }
-    }
-}
+pub type CapabilityEffect = PermissionEffect;
 
-impl std::fmt::Display for AccessMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for PermissionEffect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AccessMode::ReadOnly => write!(f, "readonly"),
-            AccessMode::ReadWrite => write!(f, "readwrite"),
-            AccessMode::Execute => write!(f, "execute"),
-            AccessMode::Connect => write!(f, "connect"),
-            AccessMode::Any => write!(f, "any"),
+            Self::Allow => f.write_str("allow"),
+            Self::Deny => f.write_str("deny"),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PermissionAction {
+    #[serde(rename = "read")]
+    Read,
+    #[serde(rename = "write")]
+    Write,
+    #[serde(rename = "readwrite", alias = "read-write")]
+    ReadWrite,
+    #[serde(rename = "execute")]
+    Execute,
+    #[serde(rename = "connect")]
+    Connect,
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "use")]
+    Use,
+    #[serde(rename = "manage")]
+    Manage,
+}
+
+pub type CapabilityAction = PermissionAction;
+
+impl fmt::Display for PermissionAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read => f.write_str("read"),
+            Self::Write => f.write_str("write"),
+            Self::ReadWrite => f.write_str("readwrite"),
+            Self::Execute => f.write_str("execute"),
+            Self::Connect => f.write_str("connect"),
+            Self::Open => f.write_str("open"),
+            Self::Use => f.write_str("use"),
+            Self::Manage => f.write_str("manage"),
+        }
+    }
+}
+
+fn default_action_for_scheme(scheme: &str) -> PermissionAction {
+    match scheme {
+        "tcp" | "udp" | "network" => PermissionAction::Connect,
+        "file" => PermissionAction::ReadWrite,
+        "device" | "sys" | "kernel" | "sudo" => PermissionAction::Manage,
+        "log" => PermissionAction::Write,
+        _ => PermissionAction::Use,
     }
 }
 
@@ -95,30 +133,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_capability() {
-        let c: Capability = "file:/app/**".parse().unwrap();
-        assert_eq!(c.scheme, "file");
-        assert_eq!(c.resource, "/app/**");
-        assert_eq!(c.access, AccessMode::Any);
+    fn parses_legacy_permission_for_compatibility() {
+        let permission: PermissionRule = "tcp:/connect/*".parse().unwrap();
+
+        assert_eq!(permission.scheme.as_str(), "tcp");
+        assert_eq!(permission.target.as_str(), "/connect/*");
+        assert_eq!(permission.action, PermissionAction::Connect);
     }
 
     #[test]
-    fn parse_with_access() {
-        let c: Capability = "log:/hello-service".parse().unwrap();
-        assert_eq!(c.scheme, "log");
-        assert_eq!(c.resource, "/hello-service");
-        assert_eq!(c.access, AccessMode::Any);
-    }
-
-    #[test]
-    fn display_roundtrip() {
-        let c = Capability {
-            scheme: "tcp".into(),
-            resource: "/connect/*".into(),
-            access: AccessMode::Connect,
+    fn normalizes_typed_permission() {
+        let permission = PermissionRule {
+            effect: PermissionEffect::Allow,
+            scheme: SchemeName::parse("file").unwrap(),
+            action: PermissionAction::Read,
+            target: PermissionTarget::parse("/app/etc").unwrap(),
         };
-        let s = c.to_string();
-        let c2: Capability = s.parse().unwrap();
-        assert_eq!(c, c2);
+
+        assert_eq!(permission.normalized_key(), "allow:file:read:/app/etc");
     }
 }

@@ -6,7 +6,7 @@
 - `cargo-nextest` (optional)
 - `just` (optional)
 - `git`
-- `zstd` / `tar` (used by bundle compression)
+- system `tar` is useful for inspection; Cocoon uses Rust gzip/tar libraries
 
 ## 2. Clone Repository
 
@@ -15,11 +15,13 @@ git clone https://github.com/a19q3/Cocoon.git
 cd cocoon
 ```
 
-## 3. Run Unit Tests
+## 3. Run Local Gate
 
 ```bash
-cargo test
+cargo xtask test
 ```
+
+This runs formatting, clippy with warnings denied, and workspace tests.
 
 ## 4. Build CLI
 
@@ -43,7 +45,11 @@ cargo run -p cocoon-cli -- inspect target/capsules/hello-service.cocoon
 
 ```bash
 cargo run -p cocoon-cli -- verify target/capsules/hello-service.cocoon
+cargo run -p cocoon-cli -- verify --strict target/capsules/hello-service.cocoon
 ```
+
+P0 capsules are unsigned by default. The non-strict command reports that as a
+warning; strict mode is intended for the future signed install path.
 
 ## 8. Permission Diff
 

@@ -10,3 +10,4 @@ serde = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
 blake3 = { workspace = true }
+semver = { workspace = true }

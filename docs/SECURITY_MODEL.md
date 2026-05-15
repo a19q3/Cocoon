@@ -3,45 +3,77 @@
 ## Trust Boundary
 
 | Layer | Trust Level |
-|-------|------------|
+|-------|-------------|
 | Cocoon runtime | Trusted |
 | Verified capsule manifest | Trusted |
-| Redox namespace/capability enforcement | Trusted |
+| Redox namespace and fd capability enforcement | Trusted |
 | Capsule author | Partially trusted |
 | Installed service binary | Partially trusted |
-| Service runtime behaviour | Untrusted |
+| Service runtime behavior | Untrusted |
 | Network input | Untrusted |
 | External bundle source | Untrusted |
 
 ## Principle
 
-Cocoon does not assume the service is benign. The service can only access resources explicitly declared in the manifest. Redox runtime enforces this through scheme visibility and capability restrictions.
+Cocoon does not assume a service is benign. The service should only see schemes
+and receive handles declared by the verified manifest. On Redox, enforcement is
+expected to come from namespace construction, scheme visibility, and capability
+handles rather than a Linux container boundary.
+
+## Bundle Verification
+
+Before install, Cocoon verifies:
+
+- archive paths are relative, normalized, and unique;
+- every payload file is listed in `manifest/hashes.json`;
+- every listed file exists in the archive;
+- each payload BLAKE3 hash matches the hash manifest;
+- generated metadata is not accepted as user payload;
+- strict mode rejects unsigned capsules.
+
+Unsigned P0 capsules are allowed for local development, but the issue remains
+visible in `cocoon verify`.
 
 ## Permission Diff on Update
 
-When a capsule update expands capabilities, Cocoon reports severity and may require confirmation:
+When a capsule update expands allowed permissions, Cocoon reports severity and
+can require confirmation:
 
-```
-Permission expansion detected:
-  HIGH: new outbound network access
-  MEDIUM: new writable filesystem path
+```text
+Permission changes detected:
+      HIGH: new permission: allow tcp connect api.example.com:443
+    MEDIUM: new permission: allow file readwrite /app/cache/**
 
-Confirmation required.
+Permission expansion detected. Confirmation required.
 ```
+
+Removed permissions are displayed as reductions. Deny rules do not count as
+permission expansion.
 
 ## Receipts
 
-Every install/update/run produces a signed receipt for audit:
+Each verified install writes a receipt outside the signed payload area:
 
 ```json
 {
+  "receipt_version": 1,
   "event": "capsule_install",
-  "capsule": "hello-service",
-  "version": "0.1.0",
-  "manifest_hash": "blake3:...",
-  "bundle_hash": "blake3:...",
-  "capability_hash": "blake3:...",
-  "installed_at": "2026-05-15T00:00:00Z",
-  "previous_receipt": "blake3:..."
+  "body": {
+    "capsule_name": "hello-service",
+    "capsule_version": "0.1.0",
+    "bundle_hash": "blake3:...",
+    "manifest_hash": "blake3:...",
+    "permission_hash": "blake3:...",
+    "runtime_version": "0.1.0",
+    "install_root": "/pkg/cocoon/capsules/hello-service/versions/0.1.0",
+    "installed_at": "unix:1770998400",
+    "previous_receipt": "blake3:..."
+  },
+  "body_hash": "blake3:...",
+  "signature": null
 }
 ```
+
+`body_hash` is computed from the canonical receipt body, excluding `body_hash`
+and `signature`, so the receipt is not self-referential. The `previous_receipt`
+field points at the previous receipt body hash.
