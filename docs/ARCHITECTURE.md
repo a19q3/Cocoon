@@ -101,10 +101,11 @@ packages.
 - Partially trusted: capsule author and installed service binary.
 - Untrusted: service runtime behavior, external network input, external bundle source.
 
-Permission diffing compares normalized typed permission rules. New allowed
-network, device, sys, sudo, memory, proc, or sensitive filesystem access is
-reported with severity; removed permissions are reductions and do not require
-confirmation.
+Authority diffing compares normalized typed permission rules plus scheme
+visibility, preopened handles, and network defaults. New allowed network,
+device, sys, sudo, memory, proc, sensitive filesystem access, broader scheme
+visibility, or broader preopens are reported with severity; removed authority is
+a reduction and does not require confirmation.
 
 ## Artifact Direction
 
@@ -132,6 +133,7 @@ relocatable payload installation.
 - Manifest and permission validation.
 - `.cocoon` build, inspect, verify, and permission diff.
 - Bundle tamper detection and strict unsigned mode.
+- Entry-point payload validation and executable mode preservation.
 - Verified staged install and audit receipt generation.
 - macOS development and coding-style guides.
 - No claim of runtime isolation enforcement outside Redox.

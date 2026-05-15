@@ -77,9 +77,14 @@ default = "deny"
 - `capsule.version` must be SemVer.
 - `entry.cmd`, `entry.cwd`, filesystem paths, and preopen guest paths must stay
   inside `filesystem.root`.
+- `entry.cmd` must map to an existing executable payload file. For example,
+  `filesystem.root = "/app"` and `entry.cmd = "/app/bin/service"` require a
+  capsule payload file at `bin/service`.
 - Readonly and writable filesystem paths must not overlap.
 - Permission rules are normalized before diffing; only `effect = "allow"` rules
   count as permission expansion.
+- Scheme visibility, preopened handles, and `network.default` are part of the
+  authority surface and should be reviewed with permission changes.
 - Unknown manifest fields are rejected.
 
 ## Hash Manifest
@@ -96,9 +101,13 @@ default = "deny"
 }
 ```
 
-`manifest/hashes.json` and `manifest/signature.json` are generated metadata.
-Every other archive file must be listed in `files`; extra, missing, duplicate,
-absolute, or parent-traversing archive paths are invalid.
+`manifest/hashes.json`, `manifest/signature.json`, and future
+`manifest/sbom.json` are generated metadata. Every other archive file must be
+listed in `files`; extra, missing, duplicate, absolute, or parent-traversing
+archive paths are invalid.
+
+P0 tar capsules preserve executable mode bits where the host platform exposes
+them, so entrypoint payloads can survive materialization as runnable files.
 
 ## Signature
 

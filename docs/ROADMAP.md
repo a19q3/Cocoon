@@ -28,6 +28,7 @@ Goal: make `cocoon verify` an integrity primitive, not a demo command.
 - Reject parent traversal and absolute archive paths.
 - Reject corrupted hash manifests.
 - Detect manifest/hash mismatch.
+- Reject capsules whose `entry.cmd` does not map to an executable payload file.
 - Support unsigned local mode and strict signature-required mode.
 
 ## P0.3: Typed Permission AST
@@ -40,6 +41,7 @@ on macOS.
 - Use `[[permission]]` for operation permissions.
 - Keep legacy `[[capability]]` parsing only as a compatibility alias.
 - Diff normalized permission rules instead of raw strings.
+- Include scheme visibility, preopens, and network defaults in authority review.
 
 ## P0.4: Permission Diff Product Moment
 

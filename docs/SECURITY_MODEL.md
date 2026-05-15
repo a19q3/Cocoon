@@ -42,19 +42,25 @@ visible in `cocoon verify`.
 
 ## Permission Diff on Update
 
-When a capsule update expands allowed permissions, Cocoon reports severity and
-can require confirmation:
+When a capsule update expands service authority, Cocoon reports severity and can
+require confirmation. Authority includes allowed permissions, scheme visibility,
+preopened handles, and network defaults:
 
 ```text
-Permission changes detected:
-      HIGH: new permission: allow tcp connect api.example.com:443
-    MEDIUM: new permission: allow file readwrite /app/cache/**
+Authority changes detected:
 
-Permission expansion detected. Confirmation required.
+Added permissions:
+      HIGH  allow tcp connect api.example.com:443
+    MEDIUM  allow file readwrite /app/cache/**
+
+Modified schemes:
+      HIGH  log readonly target=service-log -> log readwrite target=service-log
+
+Confirmation required: yes
 ```
 
-Removed permissions are displayed as reductions. Deny rules do not count as
-permission expansion.
+Removed permissions, schemes, and preopens are displayed as reductions. Deny
+rules do not count as permission expansion.
 
 ## Receipts
 

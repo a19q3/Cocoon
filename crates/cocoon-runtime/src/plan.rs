@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use cocoon_bundle::BundleReader;
+use cocoon_bundle::{BundleReader, VerifiedBundle};
 use cocoon_core::{
     hash_permissions, AuditConfig, CapsuleName, CapsuleVersion, GuestPath, HostPath,
     PermissionRule, PreopenRight, SchemeName, SchemeTarget, SchemeVisibility,
@@ -13,6 +13,12 @@ pub struct InstallRoot(PathBuf);
 impl InstallRoot {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self(path.into())
+    }
+
+    pub fn parse(path: impl Into<PathBuf>) -> cocoon_core::Result<Self> {
+        let path = path.into();
+        validate_install_root(&path)?;
+        Ok(Self(path))
     }
 
     pub fn as_path(&self) -> &Path {
@@ -76,7 +82,11 @@ pub struct ReceiptInput {
 }
 
 impl RuntimePlan {
-    pub fn from_bundle(reader: &BundleReader, install_root: InstallRoot) -> Self {
+    pub fn from_verified_bundle(bundle: &VerifiedBundle, install_root: InstallRoot) -> Self {
+        Self::from_bundle(bundle.reader(), install_root)
+    }
+
+    fn from_bundle(reader: &BundleReader, install_root: InstallRoot) -> Self {
         let manifest = &reader.manifest;
 
         Self {
@@ -118,6 +128,25 @@ impl RuntimePlan {
     }
 }
 
+fn validate_install_root(path: &Path) -> cocoon_core::Result<()> {
+    let raw = path.to_string_lossy();
+    if !path.is_absolute() {
+        return Err(cocoon_core::CocoonError::InvalidManifest(format!(
+            "install root '{raw}' must be absolute"
+        )));
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(cocoon_core::CocoonError::InvalidManifest(format!(
+            "install root '{raw}' must not contain '..'"
+        )));
+    }
+
+    Ok(())
+}
+
 impl StdioPlan {
     fn from_audit(audit: &AuditConfig) -> Self {
         Self {
@@ -139,9 +168,13 @@ mod tests {
         let bytes = cocoon_bundle::BundleBuilder::new(source)
             .and_then(cocoon_bundle::BundleBuilder::build)
             .unwrap();
-        let reader = BundleReader::from_bytes(&bytes).unwrap();
+        let verified = cocoon_bundle::BundleReader::from_verified_bytes(
+            &bytes,
+            cocoon_bundle::VerificationPolicy::default(),
+        )
+        .unwrap();
 
-        let plan = RuntimePlan::from_bundle(&reader, InstallRoot::new("/pkg/cocoon"));
+        let plan = RuntimePlan::from_verified_bundle(&verified, InstallRoot::new("/pkg/cocoon"));
 
         assert_eq!(plan.capsule_name.as_str(), "hello-service");
         assert_eq!(plan.version.as_str(), "0.1.0");
