@@ -1,0 +1,19 @@
+[package]
+name = "cocoon-bundle"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+cocoon-core = { path = "../cocoon-core" }
+serde = { workspace = true }
+serde_json = "1"
+blake3 = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+thiserror = { workspace = true }
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

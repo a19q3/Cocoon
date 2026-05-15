@@ -1,0 +1,11 @@
+[package]
+name = "cocoon-policy"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+cocoon-core = { path = "../cocoon-core" }
+serde = { workspace = true }
+thiserror = { workspace = true }

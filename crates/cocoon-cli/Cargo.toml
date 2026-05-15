@@ -1,0 +1,21 @@
+[package]
+name = "cocoon-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cocoon"
+path = "src/main.rs"
+
+[dependencies]
+cocoon-core = { path = "../cocoon-core" }
+cocoon-bundle = { path = "../cocoon-bundle" }
+cocoon-policy = { path = "../cocoon-policy" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"

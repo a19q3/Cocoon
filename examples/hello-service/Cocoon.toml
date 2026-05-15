@@ -1,0 +1,55 @@
+[capsule]
+name = "hello-service"
+version = "0.1.0"
+description = "Minimal Cocoon demo service"
+authors = ["Arthur Tsang"]
+license = "MIT"
+
+[entry]
+cmd = "/app/bin/hello-service"
+args = []
+cwd = "/app"
+
+[filesystem]
+root = "/app"
+writable = [
+  "/app/data",
+  "/app/tmp"
+]
+readonly = [
+  "/app/etc",
+  "/app/assets"
+]
+
+[capabilities]
+allow = [
+  "file:/app/**",
+  "log:/hello-service",
+  "time:/readonly",
+  "rand:/readonly"
+]
+
+deny = [
+  "file:/home/**",
+  "file:/etc/secrets/**",
+  "tcp:/connect/*",
+  "device:/**"
+]
+
+[network]
+default = "deny"
+
+[resources]
+memory_mb = 64
+max_processes = 4
+max_open_fds = 64
+
+[update]
+signed = true
+rollback = true
+permission_expansion_requires_confirmation = true
+
+[audit]
+events = true
+stdout = true
+stderr = true

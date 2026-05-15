@@ -1,0 +1,32 @@
+[workspace]
+members = [
+  "crates/cocoon-core",
+  "crates/cocoon-bundle",
+  "crates/cocoon-policy",
+  "crates/cocoon-cli",
+  "crates/cocoon-runtime",
+  "crates/cocoon-testkit",
+  "xtask"
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Arthur Tsang"]
+license = "MIT"
+repository = "https://github.com/a19q3/Cocoon.git"
+rust-version = "1.78"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "1"
+anyhow = "1"
+blake3 = "1"
+tar = "0.4"
+flate2 = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3"
