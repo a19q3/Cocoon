@@ -2,37 +2,168 @@
 
 Capability-aware service capsules on top of Redox package infrastructure.
 
-> Cocoon packages Redox services into signed, capability-declared capsules with reproducible deployment, permission diffs, rollback metadata, and audit logs.
+> Cocoon packages Redox services with typed service authority, strict capsule
+> verification, permission diffs, runtime plans, rollback metadata, and audit
+> receipts.
 
-## Philosophy
+Cocoon is not Docker for Redox and not a replacement for `pkg`/`pkgar`. It is a
+service deployment layer for long-running or sensitive Redox services.
 
-Docker packages a small Linux-shaped world.  
-Cocoon packages a capability-bound Redox service.
+## Model
 
-## Package Management Boundary
-
-Cocoon is not a replacement for Redox package management. It is a
-capability-aware service capsule layer that can use `pkgar` as its payload
-format and adds service manifests, permission diffs, runtime plans, rollback
-policy, and audit receipts.
-
-```text
-pkg/pkgar = install bytes
-Cocoon = install authority
-Redox namespace/capability = enforce authority
+```mermaid
+flowchart TD
+    P["pkg / pkgar<br/>install bytes"] --> C["Cocoon<br/>install authority"]
+    C --> R["Redox namespace / fd capabilities<br/>enforce authority"]
+    C --> D["permission diffs<br/>runtime plans<br/>receipts"]
 ```
 
-Cocoon should not become a dependency solver, package repository, general app
-store, or `pkg` replacement. It is for long-running services that need explicit
-authority, runtime intent, and auditability.
+```text
+pkg/pkgar = payload package layer
+Cocoon = service authority layer
+Redox namespace/capability = enforcement layer
+```
+
+Docker packages a small Linux-shaped world. Cocoon packages a
+capability-bound Redox service.
+
+## Boundary
+
+Cocoon should use `pkg`/`pkgar` for payloads where possible. It adds service
+manifests, permission diffs, runtime plans, rollback policy, and audit receipts.
+
+Cocoon does not do:
+
+- general dependency solving;
+- package repositories;
+- whole-system updates;
+- general app-store workflows;
+- OCI compatibility.
+
+It is intended for services such as web consoles, network daemons, logging
+daemons, update services, admin panels, device-facing services, and appliance
+control services.
 
 ## Quick Start
+
+Build, inspect, and verify a capsule:
 
 ```bash
 cargo run -p cocoon-cli -- build examples/hello-service
 cargo run -p cocoon-cli -- inspect target/capsules/hello-service.cocoon
 cargo run -p cocoon-cli -- verify target/capsules/hello-service.cocoon
 ```
+
+P0 capsules are unsigned, so normal verification reports:
+
+```text
+Bundle is unsigned (P0 signature placeholder).
+```
+
+Strict verification fails unsigned capsules, as intended:
+
+```bash
+cargo run -p cocoon-cli -- verify --strict target/capsules/hello-service.cocoon
+```
+
+## Permission Diff
+
+Build the demo capsules:
+
+```bash
+cargo run -p cocoon-cli -- build examples/permission-diff-v1 \
+  --output target/capsules/permission-diff-v1.cocoon
+cargo run -p cocoon-cli -- build examples/permission-diff-v2 \
+  --output target/capsules/permission-diff-v2.cocoon
+```
+
+Compare service authority before an update:
+
+```bash
+cargo run -p cocoon-cli -- diff-permissions \
+  target/capsules/permission-diff-v1.cocoon \
+  target/capsules/permission-diff-v2.cocoon
+```
+
+Output:
+
+```text
+Permission changes detected:
+
+Added permissions:
+      HIGH  allow tcp connect api.example.com:443
+    MEDIUM  allow file readwrite /app/cache/**
+
+Modified permissions:
+       LOW  allow log read service-log -> allow log write service-log
+
+Removed permissions:
+       LOW  allow file read /app/assets/**
+
+Confirmation required: yes
+```
+
+## Runtime Plan
+
+Render the normalized runtime contract without executing it:
+
+```bash
+cargo run -p cocoon-cli -- plan target/capsules/hello-service.cocoon
+```
+
+Example output:
+
+```text
+Runtime plan for hello-service@0.1.0
+Install root: /pkg/cocoon
+
+Entry:
+  cmd: /app/bin/hello-service
+  cwd: /app
+  args: []
+
+Schemes:
+  log readwrite target=service-log
+
+Preopens:
+  file /pkg/cocoon/capsules/hello-service/current -> /app [read, execute]
+
+Permissions:
+  allow file readwrite /app/**
+  allow log write hello-service
+  allow time read readonly
+  allow rand read readonly
+  deny file readwrite /home/**
+  deny file readwrite /etc/secrets/**
+  deny tcp connect *
+  deny device manage /**
+```
+
+This is the bridge from P0 capsule intent to future P1 Redox/QEMU execution.
+
+## Redox Smoke Scaffold
+
+Prepare the early P1 smoke artifacts:
+
+```bash
+cargo xtask redox-smoke
+```
+
+Expected output:
+
+```text
+PASS build hello-service.cocoon
+PASS verify capsule
+PASS generate runtime plan
+PASS image overlay prepared
+```
+
+## Status
+
+P0 defines and verifies capsule intent. It does not yet enforce Redox runtime
+isolation. Runtime isolation claims start in P1 with Redox/QEMU evidence:
+constructed namespaces, visible schemes, preopened handles, service spawn, log
+capture, receipts, and denied-access checks.
 
 ## Docs
 
