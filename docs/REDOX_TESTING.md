@@ -38,6 +38,12 @@ PASS cocoon-cli redox cargo check
 TODO redox link probe binary link (requires Redox C sysroot/toolchain)
 TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
 
+== Redoxer smoke ==
+SKIP redoxer available (install with `cargo install redoxer`)
+SKIP redoxer build redox-link-probe
+SKIP redoxer build cocoon-cli
+SKIP redoxer run cocoon --help
+
 == QEMU smoke ==
 TODO boot redox qemu
 TODO run cocoon verify inside redox
@@ -81,7 +87,7 @@ COCOON_SMOKE_VERBOSE=1 cargo xtask redox-smoke
 
 ## Redox Toolchain Bridge
 
-P1.1a is about making the toolchain path reproducible before claiming a QEMU
+P1.1a/P1.1b are about making the toolchain path reproducible before claiming a QEMU
 execution smoke. Do not hand-roll linker flags as the default path.
 
 There are two upstream-aligned routes to verify:
@@ -103,6 +109,41 @@ Current investigation targets:
    overlay.
 4. If the probe does not link, set up Redoxer or a Redox build-system checkout
    and repeat before changing Cocoon code.
+
+Redoxer is optional for the default smoke scaffold. If it is installed, Cocoon
+will try the official Redoxer build path:
+
+```bash
+cargo xtask redoxer-smoke
+```
+
+Expected progression:
+
+```text
+== Redoxer smoke ==
+PASS redoxer available
+PASS redoxer build redox-link-probe
+PASS redoxer build cocoon-cli
+PASS redoxer run cocoon --help
+```
+
+If Redoxer is missing, the command reports SKIP and exits successfully. If the
+minimal probe fails under Redoxer, keep the failure classified as toolchain setup
+until the Redoxer toolchain has been initialized.
+
+Manual Redoxer setup:
+
+```bash
+cargo install redoxer
+redoxer toolchain
+redoxer build -p redox-link-probe
+redoxer build -p cocoon-cli
+redoxer run -p cocoon-cli -- --help
+```
+
+The Redoxer README describes `redoxer build` as a Cargo build run with the Redox
+environment, `redoxer run` as running a Cargo target inside Redox, and
+`REDOXER_SYSROOT` as the sysroot override when needed.
 
 ## Manual Steps
 
@@ -137,6 +178,12 @@ Probe Redox linking:
 ```bash
 cargo build -p redox-link-probe --target x86_64-unknown-redox
 cargo build -p cocoon-cli --target x86_64-unknown-redox
+```
+
+Probe Redoxer linking and execution:
+
+```bash
+cargo xtask redoxer-smoke
 ```
 
 Prepare an image overlay:

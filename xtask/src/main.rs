@@ -39,6 +39,7 @@ fn main() -> anyhow::Result<()> {
         "redox-smoke" => redox_smoke(),
         "host-smoke" => host_smoke(),
         "redox-target-smoke" => redox_target_smoke(),
+        "redoxer-smoke" => redoxer_smoke(),
         "qemu-smoke" => qemu_smoke(),
         "redox-test" => {
             println!("Redox QEMU smoke test is not implemented yet. Use `cargo xtask redox-smoke` for the P1 scaffold.");
@@ -52,6 +53,7 @@ fn main() -> anyhow::Result<()> {
             println!("  host-smoke      Run host-side P1 smoke checks");
             println!("  redox-target-smoke");
             println!("                  Check Redox target portability and link readiness");
+            println!("  redoxer-smoke  Check Redoxer toolchain build readiness");
             println!("  qemu-smoke      Report QEMU smoke-test readiness");
             println!("  redox-smoke     Prepare P1 Redox smoke-test artifacts");
             println!("  redox-test      Run Redox QEMU smoke test (P1)");
@@ -148,6 +150,42 @@ fn redox_target_smoke() -> anyhow::Result<()> {
         println!("TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)");
     }
 
+    redoxer_smoke()?;
+
+    Ok(())
+}
+
+fn redoxer_smoke() -> anyhow::Result<()> {
+    print_section("Redoxer smoke");
+
+    if !program_available("redoxer")? {
+        println!("SKIP redoxer available (install with `cargo install redoxer`)");
+        println!("SKIP redoxer build redox-link-probe");
+        println!("SKIP redoxer build cocoon-cli");
+        println!("SKIP redoxer run cocoon --help");
+        return Ok(());
+    }
+
+    println!("PASS redoxer available");
+
+    if run_optional("redoxer", &["build", "-p", "redox-link-probe"])? {
+        println!("PASS redoxer build redox-link-probe");
+    } else {
+        println!("TODO redoxer build redox-link-probe");
+    }
+
+    if run_optional("redoxer", &["build", "-p", "cocoon-cli"])? {
+        println!("PASS redoxer build cocoon-cli");
+    } else {
+        println!("TODO redoxer build cocoon-cli");
+    }
+
+    if run_optional("redoxer", &["run", "-p", "cocoon-cli", "--", "--help"])? {
+        println!("PASS redoxer run cocoon --help");
+    } else {
+        println!("TODO redoxer run cocoon --help");
+    }
+
     Ok(())
 }
 
@@ -186,4 +224,18 @@ fn run_optional(program: &str, args: &[&str]) -> anyhow::Result<bool> {
 
     let status = command.status()?;
     Ok(status.success())
+}
+
+fn program_available(program: &str) -> anyhow::Result<bool> {
+    let status = Command::new(program)
+        .arg("--help")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    match status {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }

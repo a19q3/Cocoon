@@ -76,6 +76,17 @@ Goal: separate Cocoon portability from Redox sysroot/linker readiness.
   dependencies.
 - Prefer Redoxer or a Redox Cookbook recipe path over custom linker flag hacks.
 
+#### P1.1b: Redoxer / Cookbook Integration Spike
+
+Goal: use the official Redox-supported build path to produce a linkable Cocoon
+binary.
+
+- Detect Redoxer without making it a default local dependency.
+- Build `redox-link-probe` through Redoxer first.
+- Build `cocoon-cli` through Redoxer only after the probe succeeds.
+- Run `cocoon --help` through Redoxer or equivalent QEMU bridge.
+- Keep a Cookbook recipe draft for the eventual image integration path.
+
 - Build Cocoon CLI/runtime for the Redox target.
 - Include Cocoon binary and hello-service capsule in a Redox image overlay.
 - Boot QEMU.
