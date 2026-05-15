@@ -1,0 +1,45 @@
+[capsule]
+name = "permission-diff-demo"
+version = "0.1.0"
+description = "Permission diff demo v1"
+authors = ["Arthur Tsang"]
+license = "MIT"
+
+[entry]
+cmd = "/app/bin/demo-service"
+args = []
+cwd = "/app"
+
+[filesystem]
+root = "/app"
+readonly = ["/app/assets"]
+writable = ["/app/data"]
+
+[[permission]]
+scheme = "file"
+action = "read"
+target = "/app/assets/**"
+
+[[permission]]
+scheme = "log"
+action = "read"
+target = "service-log"
+
+[[preopen]]
+scheme = "file"
+host_path = "/pkg/cocoon/capsules/permission-diff-demo/current"
+guest_path = "/app"
+rights = ["read", "execute"]
+
+[[scheme]]
+name = "log"
+visibility = "readonly"
+target = "service-log"
+
+[network]
+default = "deny"
+
+[audit]
+events = true
+stdout = true
+stderr = true

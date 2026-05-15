@@ -11,7 +11,9 @@
 //! - Rollback support
 
 pub mod install;
+pub mod plan;
 pub mod status;
 
 pub use install::*;
+pub use plan::*;
 pub use status::*;

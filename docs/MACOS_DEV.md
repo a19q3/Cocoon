@@ -54,10 +54,20 @@ warning; strict mode is intended for the future signed install path.
 ## 8. Permission Diff
 
 ```bash
-cargo run -p cocoon-cli -- diff-permissions examples/v1.cocoon examples/v2.cocoon
+cargo run -p cocoon-cli -- build examples/permission-diff-v1 --output target/capsules/permission-diff-v1.cocoon
+cargo run -p cocoon-cli -- build examples/permission-diff-v2 --output target/capsules/permission-diff-v2.cocoon
+cargo run -p cocoon-cli -- diff-permissions target/capsules/permission-diff-v1.cocoon target/capsules/permission-diff-v2.cocoon
 ```
 
-## 9. Redox Integration
+## 9. Runtime Plan
+
+```bash
+cargo run -p cocoon-cli -- plan target/capsules/hello-service.cocoon
+```
+
+This renders the normalized Redox runtime intent without executing it.
+
+## 10. Redox Integration
 
 Use a Linux laptop or Linux VM for QEMU integration.
 See [REDOX_TESTING.md](REDOX_TESTING.md).

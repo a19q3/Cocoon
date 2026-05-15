@@ -1,5 +1,12 @@
 # Cocoon Roadmap
 
+## Scope Boundary
+
+Cocoon stays above Redox package management. It does not replace `pkg`, `pkgar`,
+dependency resolution, package repositories, or whole-system updates. The payload
+layer should converge on `pkgar`; Cocoon adds service authority: manifests,
+permission diffs, runtime plans, receipts, and rollback policy.
+
 ## P0.1: Style Gate
 
 Goal: make the workspace boring to maintain.

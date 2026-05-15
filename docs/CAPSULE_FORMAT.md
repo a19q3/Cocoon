@@ -4,6 +4,11 @@ P0 `.cocoon` files are gzipped tar archives so the macOS workflow stays simple.
 This is provisional. The target Redox-native artifact is a `pkgar` payload with
 Cocoon policy metadata as the outer capsule envelope.
 
+Cocoon should not own the general package payload layer long term. File payloads,
+content hashes, package dependencies, and relocatable installation should remain
+aligned with Redox `pkg`/`pkgar`; Cocoon adds service-specific authority metadata
+around that payload.
+
 ```text
 hello.cocoon
   ├── Cocoon.toml

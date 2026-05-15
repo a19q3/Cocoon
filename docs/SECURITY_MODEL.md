@@ -20,6 +20,12 @@ and receive handles declared by the verified manifest. On Redox, enforcement is
 expected to come from namespace construction, scheme visibility, and capability
 handles rather than a Linux container boundary.
 
+Cocoon is not the trusted package manager for all system software. It verifies
+and records service authority. The underlying payload transport and package
+installation layer should be Redox `pkg`/`pkgar` where possible; Cocoon's
+security value is permission review, runtime intent, and receipt generation for
+services.
+
 ## Bundle Verification
 
 Before install, Cocoon verifies:

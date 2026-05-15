@@ -37,6 +37,14 @@ enum Commands {
         /// Path to the .cocoon file
         capsule: PathBuf,
     },
+    /// Show the normalized Redox runtime plan without executing it
+    Plan {
+        /// Path to the .cocoon file
+        capsule: PathBuf,
+        /// Cocoon install root used when rendering the plan
+        #[arg(long, default_value = "/pkg/cocoon")]
+        install_root: PathBuf,
+    },
     /// Show permission diff between two capsules
     DiffPermissions {
         /// Old capsule
@@ -54,6 +62,10 @@ fn main() -> Result<()> {
         Commands::Build { source, output } => cmd_build(source, output),
         Commands::Verify { capsule, strict } => cmd_verify(capsule, strict),
         Commands::Inspect { capsule } => cmd_inspect(capsule),
+        Commands::Plan {
+            capsule,
+            install_root,
+        } => cmd_plan(capsule, install_root),
         Commands::DiffPermissions { old, new } => cmd_diff_permissions(old, new),
     }
 }
@@ -114,6 +126,26 @@ fn cmd_inspect(capsule: PathBuf) -> Result<()> {
     Ok(())
 }
 
+fn cmd_plan(capsule: PathBuf, install_root: PathBuf) -> Result<()> {
+    let bytes = std::fs::read(&capsule)?;
+    let reader = cocoon_bundle::BundleReader::from_bytes(&bytes)?;
+    let issues = reader.verify()?;
+    if issues
+        .iter()
+        .any(cocoon_bundle::VerificationIssue::is_integrity_failure)
+    {
+        println!("{}", format_verification_issues(&issues));
+        bail!("cannot plan an invalid capsule");
+    }
+
+    let plan = cocoon_runtime::RuntimePlan::from_bundle(
+        &reader,
+        cocoon_runtime::InstallRoot::new(install_root),
+    );
+    println!("{}", format_runtime_plan(&plan));
+    Ok(())
+}
+
 fn cmd_diff_permissions(old: PathBuf, new: PathBuf) -> Result<()> {
     let old_bytes = std::fs::read(&old)?;
     let new_bytes = std::fs::read(&new)?;
@@ -123,11 +155,6 @@ fn cmd_diff_permissions(old: PathBuf, new: PathBuf) -> Result<()> {
     let diff = cocoon_core::diff_permissions(&old_reader.manifest, &new_reader.manifest)?;
     let report = cocoon_policy::format_diff_report(&diff);
     println!("{}", report);
-
-    let policy = cocoon_policy::UpdatePolicy::default();
-    if cocoon_policy::requires_confirmation(&diff, &policy) {
-        println!("\nPermission expansion detected. Confirmation required.");
-    }
     Ok(())
 }
 
@@ -261,6 +288,98 @@ fn join_display<T: std::fmt::Display>(items: &[T]) -> String {
         .join(", ")
 }
 
+fn format_runtime_plan(plan: &cocoon_runtime::RuntimePlan) -> String {
+    let mut lines = Vec::new();
+
+    lines.push(format!(
+        "Runtime plan for {}@{}",
+        plan.capsule_name, plan.version
+    ));
+    lines.push(format!("Install root: {}", plan.install_root));
+    lines.push(String::new());
+    lines.push("Entry:".to_string());
+    lines.push(format!("  cmd: {}", plan.entry.cmd));
+    lines.push(format!("  cwd: {}", plan.entry.cwd));
+    lines.push(format!("  args: {:?}", plan.entry.args));
+    lines.push(String::new());
+    lines.push("Schemes:".to_string());
+    for scheme in &plan.schemes {
+        let target = scheme
+            .target
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "<runtime>".to_string());
+        lines.push(format!(
+            "  {} {} target={}",
+            scheme.name,
+            visibility_label(scheme.visibility),
+            target
+        ));
+    }
+    lines.push(String::new());
+    lines.push("Preopens:".to_string());
+    for preopen in &plan.preopens {
+        let host_path = preopen
+            .host_path
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "<runtime-provided>".to_string());
+        lines.push(format!(
+            "  {} {} -> {} [{}]",
+            preopen.scheme,
+            host_path,
+            preopen.guest_path,
+            preopen_rights(&preopen.rights)
+        ));
+    }
+    lines.push(String::new());
+    lines.push("Permissions:".to_string());
+    for permission in &plan.permissions {
+        lines.push(format!("  {}", permission));
+    }
+    lines.push(String::new());
+    lines.push("Stdio:".to_string());
+    lines.push(format!("  stdout: {}", plan.stdio.capture_stdout));
+    lines.push(format!("  stderr: {}", plan.stdio.capture_stderr));
+    lines.push(format!("  events: {}", plan.stdio.audit_events));
+    lines.push(String::new());
+    lines.push("Receipt input:".to_string());
+    lines.push(format!(
+        "  manifest_hash: {}",
+        plan.receipt_input.manifest_hash
+    ));
+    lines.push(format!(
+        "  permission_hash: {}",
+        plan.receipt_input.permission_hash
+    ));
+    lines.push(format!(
+        "  runtime_version: {}",
+        plan.receipt_input.runtime_version
+    ));
+
+    lines.join("\n")
+}
+
+fn visibility_label(visibility: cocoon_core::SchemeVisibility) -> &'static str {
+    match visibility {
+        cocoon_core::SchemeVisibility::Hidden => "hidden",
+        cocoon_core::SchemeVisibility::Readonly => "readonly",
+        cocoon_core::SchemeVisibility::Readwrite => "readwrite",
+    }
+}
+
+fn preopen_rights(rights: &[cocoon_core::PreopenRight]) -> String {
+    rights
+        .iter()
+        .map(|right| match right {
+            cocoon_core::PreopenRight::Read => "read",
+            cocoon_core::PreopenRight::Write => "write",
+            cocoon_core::PreopenRight::Execute => "execute",
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +403,25 @@ mod tests {
 
         assert!(output.contains("=== Capsule: hello-service v0.1.0 ==="));
         assert!(output.contains("allow file readwrite /app/**"));
+    }
+
+    #[test]
+    fn formats_runtime_plan_output() {
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/hello-service");
+        let bytes = cocoon_bundle::BundleBuilder::new(source)
+            .and_then(cocoon_bundle::BundleBuilder::build)
+            .unwrap();
+        let reader = cocoon_bundle::BundleReader::from_bytes(&bytes).unwrap();
+        let plan = cocoon_runtime::RuntimePlan::from_bundle(
+            &reader,
+            cocoon_runtime::InstallRoot::new("/pkg/cocoon"),
+        );
+        let output = format_runtime_plan(&plan);
+
+        assert!(output.contains("Runtime plan for hello-service@0.1.0"));
+        assert!(output.contains("log readwrite target=service-log"));
+        assert!(output
+            .contains("file /pkg/cocoon/capsules/hello-service/current -> /app [read, execute]"));
     }
 }

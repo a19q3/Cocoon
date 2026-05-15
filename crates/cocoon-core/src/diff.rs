@@ -94,13 +94,13 @@ pub fn severity_of_diff(diff: &PermissionDiff) -> Vec<(Severity, String)> {
     let mut out = Vec::new();
 
     for permission in &diff.added {
-        let severity = permission_severity(permission);
+        let severity = severity_for_permission(permission);
         out.push((severity, format!("new permission: {permission}")));
     }
 
     for (old, new) in &diff.modified {
         let severity = if action_expanded(old.action, new.action) {
-            permission_severity(new)
+            severity_for_permission(new)
         } else {
             Severity::Low
         };
@@ -111,7 +111,7 @@ pub fn severity_of_diff(diff: &PermissionDiff) -> Vec<(Severity, String)> {
     out
 }
 
-fn permission_severity(permission: &PermissionRule) -> Severity {
+pub fn severity_for_permission(permission: &PermissionRule) -> Severity {
     match permission.scheme.as_str() {
         "device" | "kernel" | "sudo" | "sys" => Severity::Critical,
         "tcp" | "udp" | "network" => Severity::High,
@@ -127,8 +127,12 @@ fn permission_severity(permission: &PermissionRule) -> Severity {
     }
 }
 
-fn action_expanded(old: PermissionAction, new: PermissionAction) -> bool {
+pub fn permission_action_expanded(old: PermissionAction, new: PermissionAction) -> bool {
     action_rank(new) > action_rank(old)
+}
+
+fn action_expanded(old: PermissionAction, new: PermissionAction) -> bool {
+    permission_action_expanded(old, new)
 }
 
 fn action_rank(action: PermissionAction) -> u8 {

@@ -53,6 +53,37 @@ integrity verification, permission diffing, staged materialization, and install
 receipts. P0 defines and verifies capsule intent; it does not claim Redox
 runtime isolation. P1 adds Redox/QEMU namespace and spawn checks.
 
+## Package Infrastructure Boundary
+
+Cocoon is an upper layer over Redox package infrastructure, not a competing
+package manager.
+
+```text
+pkg / pkgar:
+  payload package layer
+  file contents, hashes, package updates, dependencies, relocatable payloads
+
+Cocoon:
+  service deployment layer
+  permission manifest, permission diff, runtime plan, receipts, rollback policy
+
+Redox namespace / fd capabilities:
+  enforcement layer
+  scheme visibility, preopened handles, process authority boundaries
+```
+
+Cocoon should use `pkg`/`pkgar` for payload installation where possible. Cocoon
+adds the service authority model: schemes, preopens, operation permissions,
+runtime plans, and audit receipts. It does not resolve general package
+dependencies, update the whole system, host a package repository, or replace
+Redox package management.
+
+The intended service scope is narrow: long-running or sensitive services such as
+network daemons, device-facing services, admin panels, update services, logging
+daemons, appliance control services, and web consoles. Ordinary command-line
+tools, libraries, fonts, themes, and editor packages should remain normal Redox
+packages.
+
 ## Modules
 
 | Crate | Responsibility |
