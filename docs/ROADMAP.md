@@ -60,6 +60,34 @@ Removed permissions:
 
 Goal: prove the runtime path on Redox.
 
+### P1.1: Redox Execution Smoke
+
+Goal: prove the Cocoon lifecycle inside Redox/QEMU without claiming full
+namespace enforcement.
+
+- Build Cocoon CLI/runtime for the Redox target.
+- Include Cocoon binary and hello-service capsule in a Redox image overlay.
+- Boot QEMU.
+- Run `cocoon verify` inside Redox.
+- Run `cocoon plan` inside Redox.
+- Install capsule via staged install.
+- Promote to current.
+- Run hello service.
+- Capture stdout/stderr.
+- Write install and run receipts.
+
+P1.1 is an execution smoke, not an isolation proof.
+
+### P1.2: Enforcement Smoke
+
+Goal: prove Redox authority enforcement after the lifecycle is running.
+
+- Construct the service namespace.
+- Pass preopened handles.
+- Assert denied scheme/path access fails.
+
+### P1 Acceptance
+
 - Verify before install.
 - Stage install and atomically promote.
 - Run service under a constructed Redox namespace.

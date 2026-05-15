@@ -2,6 +2,8 @@
 
 use std::process::Command;
 
+const REDOX_TARGET: &str = "x86_64-unknown-redox";
+
 fn main() -> anyhow::Result<()> {
     let task = std::env::args()
         .nth(1)
@@ -56,6 +58,18 @@ fn redox_smoke() -> anyhow::Result<()> {
     let overlay_dir = std::path::Path::new("target/redox-smoke/overlay/capsules");
     std::fs::create_dir_all(overlay_dir)?;
 
+    run("cargo", &["build", "-p", "cocoon-cli"])?;
+    println!("PASS host build cocoon");
+
+    if run_optional(
+        "cargo",
+        &["check", "-p", "cocoon-cli", "--target", REDOX_TARGET],
+    )? {
+        println!("PASS redox target cargo check");
+    } else {
+        println!("TODO redox target cargo check (install target with `rustup target add {REDOX_TARGET}`)");
+    }
+
     run(
         "cargo",
         &[
@@ -82,6 +96,14 @@ fn redox_smoke() -> anyhow::Result<()> {
 
     std::fs::copy(capsule, overlay_dir.join("hello-service.cocoon"))?;
     println!("PASS image overlay prepared");
+
+    println!("TODO redox binary link (requires Redox C sysroot/toolchain, not only rust-std)");
+    println!("TODO boot redox qemu");
+    println!("TODO run cocoon verify inside redox");
+    println!("TODO run cocoon plan inside redox");
+    println!("TODO install capsule inside redox");
+    println!("TODO run hello-service inside redox");
+    println!("TODO collect receipts/logs");
     Ok(())
 }
 
@@ -91,4 +113,9 @@ fn run(program: &str, args: &[&str]) -> anyhow::Result<()> {
         anyhow::bail!("command failed: {program} {}", args.join(" "));
     }
     Ok(())
+}
+
+fn run_optional(program: &str, args: &[&str]) -> anyhow::Result<bool> {
+    let status = Command::new(program).args(args).status()?;
+    Ok(status.success())
 }
