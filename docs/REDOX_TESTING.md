@@ -4,6 +4,9 @@ P1 testing starts with a smoke scaffold. The first goal is not full namespace
 enforcement; it is to prove that the Cocoon lifecycle can move from host-side
 verification into a Redox/QEMU execution path.
 
+For the concrete Linux-side Redoxer deployment flow, see
+[LINUX_REDOXER_DEPLOYMENT_TEST.md](LINUX_REDOXER_DEPLOYMENT_TEST.md).
+
 ## Linux Dependencies
 
 Use a Linux laptop or Linux VM with:
