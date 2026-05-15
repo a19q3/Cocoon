@@ -1,0 +1,10 @@
+[package]
+name = "redox-link-probe"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "redox-link-probe"
+path = "src/main.rs"

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const REDOX_TARGET: &str = "x86_64-unknown-redox";
 
@@ -37,6 +37,9 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         "redox-smoke" => redox_smoke(),
+        "host-smoke" => host_smoke(),
+        "redox-target-smoke" => redox_target_smoke(),
+        "qemu-smoke" => qemu_smoke(),
         "redox-test" => {
             println!("Redox QEMU smoke test is not implemented yet. Use `cargo xtask redox-smoke` for the P1 scaffold.");
             Ok(())
@@ -46,6 +49,10 @@ fn main() -> anyhow::Result<()> {
             println!("Tasks:");
             println!("  build-examples  Build example capsules");
             println!("  test            Run fmt, clippy, and workspace tests");
+            println!("  host-smoke      Run host-side P1 smoke checks");
+            println!("  redox-target-smoke");
+            println!("                  Check Redox target portability and link readiness");
+            println!("  qemu-smoke      Report QEMU smoke-test readiness");
             println!("  redox-smoke     Prepare P1 Redox smoke-test artifacts");
             println!("  redox-test      Run Redox QEMU smoke test (P1)");
             Ok(())
@@ -54,21 +61,20 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn redox_smoke() -> anyhow::Result<()> {
+    host_smoke()?;
+    redox_target_smoke()?;
+    qemu_smoke()
+}
+
+fn host_smoke() -> anyhow::Result<()> {
     let capsule = "target/redox-smoke/hello-service.cocoon";
     let overlay_dir = std::path::Path::new("target/redox-smoke/overlay/capsules");
     std::fs::create_dir_all(overlay_dir)?;
 
+    print_section("Host smoke");
+
     run("cargo", &["build", "-p", "cocoon-cli"])?;
     println!("PASS host build cocoon");
-
-    if run_optional(
-        "cargo",
-        &["check", "-p", "cocoon-cli", "--target", REDOX_TARGET],
-    )? {
-        println!("PASS redox target cargo check");
-    } else {
-        println!("TODO redox target cargo check (install target with `rustup target add {REDOX_TARGET}`)");
-    }
 
     run(
         "cargo",
@@ -96,8 +102,58 @@ fn redox_smoke() -> anyhow::Result<()> {
 
     std::fs::copy(capsule, overlay_dir.join("hello-service.cocoon"))?;
     println!("PASS image overlay prepared");
+    Ok(())
+}
 
-    println!("TODO redox binary link (requires Redox C sysroot/toolchain, not only rust-std)");
+fn redox_target_smoke() -> anyhow::Result<()> {
+    print_section("Redox target smoke");
+
+    if run_optional(
+        "cargo",
+        &["check", "-p", "redox-link-probe", "--target", REDOX_TARGET],
+    )? {
+        println!("PASS redox link probe cargo check");
+    } else {
+        println!(
+            "TODO redox link probe cargo check (install target with `rustup target add {REDOX_TARGET}`)"
+        );
+    }
+
+    if run_optional(
+        "cargo",
+        &["check", "-p", "cocoon-cli", "--target", REDOX_TARGET],
+    )? {
+        println!("PASS cocoon-cli redox cargo check");
+    } else {
+        println!(
+            "TODO cocoon-cli redox cargo check (install target with `rustup target add {REDOX_TARGET}`)"
+        );
+    }
+
+    if run_optional(
+        "cargo",
+        &["build", "-p", "redox-link-probe", "--target", REDOX_TARGET],
+    )? {
+        println!("PASS redox link probe binary link");
+    } else {
+        println!("TODO redox link probe binary link (requires Redox C sysroot/toolchain)");
+    }
+
+    if run_optional(
+        "cargo",
+        &["build", "-p", "cocoon-cli", "--target", REDOX_TARGET],
+    )? {
+        println!("PASS cocoon-cli redox binary link");
+    } else {
+        println!("TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)");
+    }
+
+    Ok(())
+}
+
+fn qemu_smoke() -> anyhow::Result<()> {
+    print_section("QEMU smoke");
+
     println!("TODO boot redox qemu");
     println!("TODO run cocoon verify inside redox");
     println!("TODO run cocoon plan inside redox");
@@ -105,6 +161,11 @@ fn redox_smoke() -> anyhow::Result<()> {
     println!("TODO run hello-service inside redox");
     println!("TODO collect receipts/logs");
     Ok(())
+}
+
+fn print_section(name: &str) {
+    println!();
+    println!("== {name} ==");
 }
 
 fn run(program: &str, args: &[&str]) -> anyhow::Result<()> {
@@ -116,6 +177,13 @@ fn run(program: &str, args: &[&str]) -> anyhow::Result<()> {
 }
 
 fn run_optional(program: &str, args: &[&str]) -> anyhow::Result<bool> {
-    let status = Command::new(program).args(args).status()?;
+    let mut command = Command::new(program);
+    command.args(args);
+
+    if std::env::var_os("COCOON_SMOKE_VERBOSE").is_none() {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+
+    let status = command.status()?;
     Ok(status.success())
 }

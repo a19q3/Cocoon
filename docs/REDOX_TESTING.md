@@ -25,13 +25,20 @@ cargo xtask redox-smoke
 Expected early output:
 
 ```text
+== Host smoke ==
 PASS host build cocoon
-PASS redox target cargo check
 PASS build hello-service.cocoon
 PASS verify capsule
 PASS generate runtime plan
 PASS image overlay prepared
-TODO redox binary link (requires Redox C sysroot/toolchain, not only rust-std)
+
+== Redox target smoke ==
+PASS redox link probe cargo check
+PASS cocoon-cli redox cargo check
+TODO redox link probe binary link (requires Redox C sysroot/toolchain)
+TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
+
+== QEMU smoke ==
 TODO boot redox qemu
 TODO run cocoon verify inside redox
 TODO run cocoon plan inside redox
@@ -40,17 +47,20 @@ TODO run hello-service inside redox
 TODO collect receipts/logs
 ```
 
-If `PASS redox target cargo check` is replaced by TODO, install the Rust target:
+If either Redox target `cargo check` line is replaced by TODO, install the Rust
+target:
 
 ```bash
 rustup target add x86_64-unknown-redox
 ```
 
-On macOS, `cargo build -p cocoon-cli --target x86_64-unknown-redox` can still
-fail at the linker stage because the Rust target does not include the Redox C
-sysroot and gcc runtime libraries. That is a toolchain/sysroot task, not a core
-crate portability failure. `cargo check --target x86_64-unknown-redox` is the
-current code-level portability gate.
+On macOS, `cargo build -p redox-link-probe --target x86_64-unknown-redox` and
+`cargo build -p cocoon-cli --target x86_64-unknown-redox` can still fail at the
+linker stage because the Rust target does not include the Redox C sysroot and
+gcc runtime libraries. If the minimal `redox-link-probe` crate also fails to
+link, treat the issue as a toolchain/sysroot task, not a Cocoon architecture
+failure. `cargo check --target x86_64-unknown-redox` is the current code-level
+portability gate.
 
 The scaffold writes:
 
@@ -61,6 +71,38 @@ target/redox-smoke/
       └── capsules/
           └── hello-service.cocoon
 ```
+
+Optional Redox target checks are quiet by default so the scaffold output stays
+readable. To see the underlying linker or target diagnostics, run:
+
+```bash
+COCOON_SMOKE_VERBOSE=1 cargo xtask redox-smoke
+```
+
+## Redox Toolchain Bridge
+
+P1.1a is about making the toolchain path reproducible before claiming a QEMU
+execution smoke. Do not hand-roll linker flags as the default path.
+
+There are two upstream-aligned routes to verify:
+
+- Redox Cookbook recipe: the Redox build system uses Cookbook recipes to compile
+  programs into Redox-specific binaries, stage files, and produce `pkgar` or
+  legacy tar packages. This is the likely long-term image integration path for
+  Cocoon.
+- Redoxer: `redoxer` installs/manages a Redox toolchain, exposes a sysroot via
+  `REDOXER_SYSROOT`, runs Cargo with the Redox environment, and can run commands
+  inside a Redox QEMU image. This is the smallest path for a linking and
+  execution probe.
+
+Current investigation targets:
+
+1. Build `redox-link-probe` with the Redox target.
+2. If the probe links, build `cocoon-cli` with the same environment.
+3. If both link, copy the Cocoon binary and `hello-service.cocoon` into an image
+   overlay.
+4. If the probe does not link, set up Redoxer or a Redox build-system checkout
+   and repeat before changing Cocoon code.
 
 ## Manual Steps
 
@@ -86,7 +128,15 @@ cargo run -p cocoon-cli -- plan target/redox-smoke/hello-service.cocoon
 Check Redox target portability:
 
 ```bash
+cargo check -p redox-link-probe --target x86_64-unknown-redox
 cargo check -p cocoon-cli --target x86_64-unknown-redox
+```
+
+Probe Redox linking:
+
+```bash
+cargo build -p redox-link-probe --target x86_64-unknown-redox
+cargo build -p cocoon-cli --target x86_64-unknown-redox
 ```
 
 Prepare an image overlay:
@@ -115,3 +165,10 @@ The real Redox/QEMU smoke test should eventually prove:
 
 Until those checks exist, Cocoon only claims that P0 defines and verifies capsule
 intent. Runtime isolation claims start with Redox/QEMU evidence.
+
+## References
+
+- Redox build system reference: <https://doc.redox-os.org/book/build-system-reference.html>
+- Including programs in Redox: <https://doc.redox-os.org/book/including-programs.html>
+- Redox programs and libraries: <https://doc.redox-os.org/book/programs-libraries.html>
+- Redoxer README: <https://docs.rs/crate/redoxer/latest/source/README.md>

@@ -65,6 +65,17 @@ Goal: prove the runtime path on Redox.
 Goal: prove the Cocoon lifecycle inside Redox/QEMU without claiming full
 namespace enforcement.
 
+#### P1.1a: Redox Toolchain Bridge
+
+Goal: separate Cocoon portability from Redox sysroot/linker readiness.
+
+- Keep host-side capsule build, verify, plan, and overlay preparation green.
+- Add a minimal `redox-link-probe` binary crate.
+- Check the probe and Cocoon CLI against `x86_64-unknown-redox`.
+- Attempt Redox binary linking for the probe before debugging Cocoon-specific
+  dependencies.
+- Prefer Redoxer or a Redox Cookbook recipe path over custom linker flag hacks.
+
 - Build Cocoon CLI/runtime for the Redox target.
 - Include Cocoon binary and hello-service capsule in a Redox image overlay.
 - Boot QEMU.
