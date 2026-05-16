@@ -6,10 +6,10 @@ use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
-use cocoon_core::{hash_bytes, CapsuleManifest, CocoonError, GuestPath, Result};
+use cocoon_core::{CapsuleManifest, CocoonError, GuestPath, Result, hash_bytes};
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 
 pub const COCOON_EXTENSION: &str = "cocoon";
 pub const MANIFEST_NAME: &str = "Cocoon.toml";
@@ -665,9 +665,10 @@ cmd = "/app/bin/test"
             .and_then(BundleBuilder::build)
             .unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("maps to missing payload file 'bin/test'"));
+        assert!(
+            err.to_string()
+                .contains("maps to missing payload file 'bin/test'")
+        );
     }
 
     #[test]
@@ -789,9 +790,11 @@ cmd = "/app/bin/test"
             .verify_with_policy(VerificationPolicy::strict())
             .unwrap();
 
-        assert!(issues
-            .iter()
-            .any(|issue| matches!(issue, VerificationIssue::SignatureRequired)));
+        assert!(
+            issues
+                .iter()
+                .any(|issue| matches!(issue, VerificationIssue::SignatureRequired))
+        );
     }
 
     #[test]

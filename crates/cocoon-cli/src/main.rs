@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use tracing::info;
 
@@ -447,7 +447,10 @@ mod tests {
 
         assert!(output.contains("Runtime plan for hello-service@0.1.0"));
         assert!(output.contains("log readwrite target=service-log"));
-        assert!(output
-            .contains("file /pkg/cocoon/capsules/hello-service/current -> /app [read, execute]"));
+        assert!(
+            output.contains(
+                "file /pkg/cocoon/capsules/hello-service/current -> /app [read, execute]"
+            )
+        );
     }
 }

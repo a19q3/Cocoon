@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use cocoon_bundle::{BundleReader, VerifiedBundle};
 use cocoon_core::{
-    hash_permissions, AuditConfig, CapsuleName, CapsuleVersion, GuestPath, HostPath,
-    PermissionRule, PreopenRight, SchemeName, SchemeTarget, SchemeVisibility,
+    AuditConfig, CapsuleName, CapsuleVersion, GuestPath, HostPath, PermissionRule, PreopenRight,
+    SchemeName, SchemeTarget, SchemeVisibility, hash_permissions,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

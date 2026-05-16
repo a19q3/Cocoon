@@ -278,18 +278,24 @@ mod tests {
             hash_bytes(&canonical_receipt_body_bytes(&receipt.body).unwrap())
         );
         assert_eq!(receipt.signature, None);
-        assert!(install_root
-            .path()
-            .join("capsules/install-test/versions/0.1.0/Cocoon.toml")
-            .exists());
-        assert!(install_root
-            .path()
-            .join("capsules/install-test/current/Cocoon.toml")
-            .exists());
-        assert!(install_root
-            .path()
-            .join("capsules/install-test/receipts/latest.json")
-            .exists());
+        assert!(
+            install_root
+                .path()
+                .join("capsules/install-test/versions/0.1.0/Cocoon.toml")
+                .exists()
+        );
+        assert!(
+            install_root
+                .path()
+                .join("capsules/install-test/current/Cocoon.toml")
+                .exists()
+        );
+        assert!(
+            install_root
+                .path()
+                .join("capsules/install-test/receipts/latest.json")
+                .exists()
+        );
     }
 
     #[test]

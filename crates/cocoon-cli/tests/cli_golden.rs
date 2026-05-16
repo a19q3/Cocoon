@@ -70,8 +70,10 @@ fn inspect_verify_and_strict_verify_outputs_are_stable() {
     let plan_stdout = stdout(plan);
     assert!(plan_stdout.contains("Runtime plan for hello-service@0.1.0"));
     assert!(plan_stdout.contains("log readwrite target=service-log"));
-    assert!(plan_stdout
-        .contains("file /pkg/cocoon/capsules/hello-service/current -> /app [read, execute]"));
+    assert!(
+        plan_stdout
+            .contains("file /pkg/cocoon/capsules/hello-service/current -> /app [read, execute]")
+    );
 }
 
 #[test]

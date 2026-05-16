@@ -607,8 +607,10 @@ visibility = "readwrite"
 
         assert!(report.contains("Authority changes detected:"));
         assert!(report.contains("Modified schemes:"));
-        assert!(report
-            .contains("HIGH  log readonly target=<runtime> -> log readwrite target=<runtime>"));
+        assert!(
+            report
+                .contains("HIGH  log readonly target=<runtime> -> log readwrite target=<runtime>")
+        );
         assert!(report.contains("Confirmation required: yes"));
     }
 

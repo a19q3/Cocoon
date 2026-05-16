@@ -42,7 +42,9 @@ fn main() -> anyhow::Result<()> {
         "redoxer-smoke" => redoxer_smoke(),
         "qemu-smoke" => qemu_smoke(),
         "redox-test" => {
-            println!("Redox QEMU smoke test is not implemented yet. Use `cargo xtask redox-smoke` for the P1 scaffold.");
+            println!(
+                "Redox QEMU smoke test is not implemented yet. Use `cargo xtask redox-smoke` for the P1 scaffold."
+            );
             Ok(())
         }
         _ => {
