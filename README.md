@@ -1,7 +1,7 @@
 # Cocoon
 
 <p align="center">
-  <img src="assets/Cocoon_logo.png" alt="Cocoon logo" width="760">
+  <img src="assets/logo.png" alt="Cocoon logo" width="760">
 </p>
 
 <p align="center">
