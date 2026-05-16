@@ -4,6 +4,12 @@
   <img src="assets/logo.svg" alt="Cocoon logo" width="760">
 </p>
 
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
+  <img alt="Rust" src="https://img.shields.io/badge/rust-2021%2B-orange.svg">
+  <img alt="RedoxOS" src="https://img.shields.io/badge/RedoxOS-pkg%2Fpkgar-red.svg">
+</p>
+
 Capability-aware service capsules on top of Redox package infrastructure.
 
 > Cocoon packages Redox services with typed service authority, strict capsule
