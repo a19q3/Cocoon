@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -195,7 +196,11 @@ fn guest_path_to_archive_path(root: &GuestPath, guest_path: &GuestPath) -> Resul
         guest_path
             .as_str()
             .strip_prefix(root.as_str())
-            .unwrap_or_default()
+            .ok_or_else(|| {
+                CocoonError::Bundle(format!(
+                    "guest path '{guest_path}' could not be mapped below filesystem.root '{root}'"
+                ))
+            })?
             .trim_start_matches('/')
     };
 
@@ -312,7 +317,9 @@ impl BundleReader {
             .filter(VerificationIssue::is_integrity_failure)
             .collect::<Vec<_>>();
         if !blocking_issues.is_empty() {
-            return Err(CocoonError::Verification(format!("{blocking_issues:?}")));
+            return Err(CocoonError::Verification(format_verification_issues(
+                &blocking_issues,
+            )));
         }
 
         Ok(VerifiedBundle { reader })
@@ -557,6 +564,48 @@ impl VerificationIssue {
     pub fn is_integrity_failure(&self) -> bool {
         !matches!(self, Self::Unsigned)
     }
+}
+
+impl fmt::Display for VerificationIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HashMismatch {
+                file,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "hash mismatch for '{file}': expected {expected}, got {actual}"
+            ),
+            Self::MissingFile(path) => write!(f, "missing file '{path}'"),
+            Self::ExtraFile(path) => write!(f, "unexpected extra file '{path}'"),
+            Self::MissingEntrypoint {
+                guest_path,
+                archive_path,
+            } => write!(
+                f,
+                "entrypoint '{guest_path}' maps to missing payload file '{archive_path}'"
+            ),
+            Self::NonExecutableEntrypoint {
+                guest_path,
+                archive_path,
+                mode,
+            } => write!(
+                f,
+                "entrypoint '{guest_path}' maps to non-executable payload file '{archive_path}' with mode {mode:o}"
+            ),
+            Self::Unsigned => f.write_str("bundle is unsigned"),
+            Self::SignatureRequired => f.write_str("bundle signature is required"),
+        }
+    }
+}
+
+fn format_verification_issues(issues: &[VerificationIssue]) -> String {
+    issues
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[cfg(test)]

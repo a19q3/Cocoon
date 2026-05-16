@@ -51,7 +51,7 @@ pub struct EntryConfig {
 }
 
 fn default_cwd() -> GuestPath {
-    GuestPath::parse("/app").expect("literal '/app' is a valid absolute guest path")
+    GuestPath::app_root()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -76,7 +76,7 @@ impl Default for FilesystemConfig {
 }
 
 fn default_root() -> GuestPath {
-    GuestPath::parse("/app").expect("literal '/app' is a valid absolute guest path")
+    GuestPath::app_root()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
