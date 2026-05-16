@@ -5,9 +5,9 @@
 </p>
 
 <p align="center">
-  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
-  <img alt="Rust" src="https://img.shields.io/badge/rust-2024%2B-orange.svg">
-  <img alt="RedoxOS" src="https://img.shields.io/badge/RedoxOS-pkg%2Fpkgar-red.svg">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-0366d6.svg">
+  <img alt="Rust" src="https://img.shields.io/badge/rust-2024%2B-2ea44f.svg">
+  <img alt="RedoxOS" src="https://img.shields.io/badge/RedoxOS-pkg%2Fpkgar-0e8a87.svg">
 </p>
 
 Capability-aware service capsules on top of Redox package infrastructure.
