@@ -6,7 +6,7 @@
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
-  <img alt="Rust" src="https://img.shields.io/badge/rust-2021%2B-orange.svg">
+  <img alt="Rust" src="https://img.shields.io/badge/rust-2024%2B-orange.svg">
   <img alt="RedoxOS" src="https://img.shields.io/badge/RedoxOS-pkg%2Fpkgar-red.svg">
 </p>
 
