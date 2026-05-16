@@ -1,0 +1,27 @@
+<svg width="960" height="240" viewBox="0 0 960 240" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Cocoon</title>
+  <desc id="desc">Cocoon logo: a protected service capsule on Redox package infrastructure.</desc>
+  <rect width="960" height="240" rx="32" fill="#0B1020"/>
+  <g transform="translate(82 38)">
+    <ellipse cx="82" cy="82" rx="70" ry="86" fill="#17213D" stroke="#7DD3FC" stroke-width="6"/>
+    <path d="M82 12C47 35 30 60 30 87c0 32 21 58 52 73 31-15 52-41 52-73 0-27-17-52-52-75Z" fill="#0F766E" opacity="0.85"/>
+    <path d="M82 28c-25 20-38 40-38 62 0 23 15 42 38 55 23-13 38-32 38-55 0-22-13-42-38-62Z" fill="#14B8A6"/>
+    <path d="M82 52c-13 13-20 25-20 39 0 13 8 25 20 34 12-9 20-21 20-34 0-14-7-26-20-39Z" fill="#CCFBF1"/>
+    <path d="M20 88h124" stroke="#7DD3FC" stroke-width="5" stroke-linecap="round" opacity="0.75"/>
+    <path d="M82 8v154" stroke="#E0F2FE" stroke-width="4" stroke-linecap="round" opacity="0.45"/>
+  </g>
+  <g transform="translate(260 62)">
+    <text x="0" y="64" fill="#F8FAFC" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="72" font-weight="800" letter-spacing="-2">Cocoon</text>
+    <text x="2" y="112" fill="#BAE6FD" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28" font-weight="500">Capability-aware Redox service capsules</text>
+    <g transform="translate(4 138)">
+      <rect x="0" y="0" width="106" height="34" rx="17" fill="#0F766E"/>
+      <text x="53" y="23" text-anchor="middle" fill="#ECFEFF" font-family="Inter, ui-sans-serif, system-ui" font-size="16" font-weight="700">pkg/pkgar</text>
+      <path d="M116 17h58" stroke="#7DD3FC" stroke-width="3" stroke-linecap="round"/>
+      <rect x="184" y="0" width="92" height="34" rx="17" fill="#1D4ED8"/>
+      <text x="230" y="23" text-anchor="middle" fill="#EFF6FF" font-family="Inter, ui-sans-serif, system-ui" font-size="16" font-weight="700">authority</text>
+      <path d="M286 17h58" stroke="#7DD3FC" stroke-width="3" stroke-linecap="round"/>
+      <rect x="354" y="0" width="122" height="34" rx="17" fill="#7C3AED"/>
+      <text x="415" y="23" text-anchor="middle" fill="#F5F3FF" font-family="Inter, ui-sans-serif, system-ui" font-size="16" font-weight="700">capabilities</text>
+    </g>
+  </g>
+</svg>

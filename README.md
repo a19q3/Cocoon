@@ -1,5 +1,9 @@
 # Cocoon
 
+<p align="center">
+  <img src="assets/logo.svg" alt="Cocoon logo" width="760">
+</p>
+
 Capability-aware service capsules on top of Redox package infrastructure.
 
 > Cocoon packages Redox services with typed service authority, strict capsule
