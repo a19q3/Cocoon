@@ -27,10 +27,29 @@ Redox namespace/capability = enforcement layer
 Docker packages a small Linux-shaped world. Cocoon packages a
 capability-bound Redox service.
 
+## Non-Negotiable Package-Manager Principle
+
+Cocoon must maximize reuse of the existing RedoxOS package-management stack.
+This is a hard design rule, not an optimization or future preference.
+
+- `pkg`/`pkgar` remain the payload package layer: files, content hashes,
+  dependencies, repositories, relocatable installation, and normal package
+  updates.
+- Cocoon must not reimplement dependency solving, package repositories,
+  whole-system updates, general app-store workflows, or a competing payload
+  package format when a Redox-native package mechanism can be used.
+- Cocoon may add only the service-authority layer around that package substrate:
+  typed service manifests, permission diffs, runtime plans, install/run receipts,
+  rollback metadata, and Redox namespace/fd-capability setup.
+- Any feature that needs payload packaging must first ask how to express or
+  delegate it through `pkg`/`pkgar`; custom Cocoon payload handling is allowed
+  only as a temporary scaffold or compatibility bridge with a clear migration
+  path back to Redox package infrastructure.
+
 ## Boundary
 
-Cocoon should use `pkg`/`pkgar` for payloads where possible. It adds service
-manifests, permission diffs, runtime plans, rollback policy, and audit receipts.
+Cocoon adds service manifests, permission diffs, runtime plans, rollback policy,
+and audit receipts on top of Redox package infrastructure.
 
 Cocoon does not do:
 
