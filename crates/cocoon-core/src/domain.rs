@@ -139,6 +139,10 @@ impl<'de> Deserialize<'de> for SchemeName {
 pub struct GuestPath(String);
 
 impl GuestPath {
+    pub fn app_root() -> Self {
+        Self("/app".to_string())
+    }
+
     pub fn parse(raw: impl Into<String>) -> crate::Result<Self> {
         let raw = raw.into();
         validate_absolute_path(&raw, "guest path")?;

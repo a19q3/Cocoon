@@ -6,6 +6,7 @@ members = [
   "crates/cocoon-cli",
   "crates/cocoon-runtime",
   "crates/cocoon-testkit",
+  "crates/redox-link-probe",
   "xtask"
 ]
 resolver = "2"

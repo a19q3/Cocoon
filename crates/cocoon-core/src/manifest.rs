@@ -51,7 +51,7 @@ pub struct EntryConfig {
 }
 
 fn default_cwd() -> GuestPath {
-    GuestPath::parse("/app").expect("literal '/app' is a valid absolute guest path")
+    GuestPath::app_root()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -76,10 +76,10 @@ impl Default for FilesystemConfig {
 }
 
 fn default_root() -> GuestPath {
-    GuestPath::parse("/app").expect("literal '/app' is a valid absolute guest path")
+    GuestPath::app_root()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(deny_unknown_fields)]
 pub struct PreopenConfig {
     pub scheme: SchemeName,
@@ -98,7 +98,7 @@ pub enum PreopenRight {
     Execute,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(deny_unknown_fields)]
 pub struct SchemeConfig {
     pub name: SchemeName,
@@ -107,7 +107,7 @@ pub struct SchemeConfig {
     pub target: Option<SchemeTarget>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum SchemeVisibility {
     Hidden,
@@ -130,7 +130,9 @@ impl Default for NetworkConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum NetworkDefault {
     #[default]

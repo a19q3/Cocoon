@@ -28,6 +28,7 @@ Goal: make `cocoon verify` an integrity primitive, not a demo command.
 - Reject parent traversal and absolute archive paths.
 - Reject corrupted hash manifests.
 - Detect manifest/hash mismatch.
+- Reject capsules whose `entry.cmd` does not map to an executable payload file.
 - Support unsigned local mode and strict signature-required mode.
 
 ## P0.3: Typed Permission AST
@@ -40,6 +41,7 @@ on macOS.
 - Use `[[permission]]` for operation permissions.
 - Keep legacy `[[capability]]` parsing only as a compatibility alias.
 - Diff normalized permission rules instead of raw strings.
+- Include scheme visibility, preopens, and network defaults in authority review.
 
 ## P0.4: Permission Diff Product Moment
 
@@ -59,6 +61,56 @@ Removed permissions:
 ## P1: Redox/QEMU Runtime Smoke
 
 Goal: prove the runtime path on Redox.
+
+### P1.1: Redox Execution Smoke
+
+Goal: prove the Cocoon lifecycle inside Redox/QEMU without claiming full
+namespace enforcement.
+
+#### P1.1a: Redox Toolchain Bridge
+
+Goal: separate Cocoon portability from Redox sysroot/linker readiness.
+
+- Keep host-side capsule build, verify, plan, and overlay preparation green.
+- Add a minimal `redox-link-probe` binary crate.
+- Check the probe and Cocoon CLI against `x86_64-unknown-redox`.
+- Attempt Redox binary linking for the probe before debugging Cocoon-specific
+  dependencies.
+- Prefer Redoxer or a Redox Cookbook recipe path over custom linker flag hacks.
+
+#### P1.1b: Redoxer / Cookbook Integration Spike
+
+Goal: use the official Redox-supported build path to produce a linkable Cocoon
+binary.
+
+- Detect Redoxer without making it a default local dependency.
+- Build `redox-link-probe` through Redoxer first.
+- Build `cocoon-cli` through Redoxer only after the probe succeeds.
+- Run `cocoon --help` through Redoxer or equivalent QEMU bridge.
+- Keep a Cookbook recipe draft for the eventual image integration path.
+
+- Build Cocoon CLI/runtime for the Redox target.
+- Include Cocoon binary and hello-service capsule in a Redox image overlay.
+- Boot QEMU.
+- Run `cocoon verify` inside Redox.
+- Run `cocoon plan` inside Redox.
+- Install capsule via staged install.
+- Promote to current.
+- Run hello service.
+- Capture stdout/stderr.
+- Write install and run receipts.
+
+P1.1 is an execution smoke, not an isolation proof.
+
+### P1.2: Enforcement Smoke
+
+Goal: prove Redox authority enforcement after the lifecycle is running.
+
+- Construct the service namespace.
+- Pass preopened handles.
+- Assert denied scheme/path access fails.
+
+### P1 Acceptance
 
 - Verify before install.
 - Stage install and atomically promote.

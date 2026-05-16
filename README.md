@@ -88,7 +88,7 @@ cargo run -p cocoon-cli -- diff-permissions \
 Output:
 
 ```text
-Permission changes detected:
+Authority changes detected:
 
 Added permissions:
       HIGH  allow tcp connect api.example.com:443
@@ -99,6 +99,9 @@ Modified permissions:
 
 Removed permissions:
        LOW  allow file read /app/assets/**
+
+Modified schemes:
+      HIGH  log readonly target=service-log -> log readwrite target=service-log
 
 Confirmation required: yes
 ```
@@ -152,10 +155,18 @@ cargo xtask redox-smoke
 Expected output:
 
 ```text
+== Host smoke ==
+PASS host build cocoon
 PASS build hello-service.cocoon
 PASS verify capsule
 PASS generate runtime plan
 PASS image overlay prepared
+
+== Redox target smoke ==
+PASS redox link probe cargo check
+PASS cocoon-cli redox cargo check
+TODO redox link probe binary link (requires Redox C sysroot/toolchain)
+TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
 ```
 
 ## Status

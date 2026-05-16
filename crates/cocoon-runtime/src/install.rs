@@ -90,16 +90,17 @@ pub fn install_capsule(capsule_path: &Path, install_root: &Path) -> Result<Insta
         return Err(RuntimeError::Bundle(err));
     }
 
-    fs::rename(&staging_dir, &version_dir)?;
-    write_current_pointer(&capsule_root, &capsule_version)?;
-
     let receipt = build_install_receipt(
         &reader,
         &version_dir,
         &bytes,
         previous_receipt_hash(&capsule_root)?,
     )?;
+
+    fs::rename(&staging_dir, &version_dir)?;
     write_receipts(&capsule_root, &capsule_version, &receipt)?;
+    promote_current(&capsule_root, &capsule_version)?;
+    write_current_pointer(&capsule_root, &capsule_version)?;
 
     Ok(receipt)
 }
@@ -117,6 +118,75 @@ fn write_current_pointer(capsule_root: &Path, capsule_version: &str) -> Result<(
     let temp = capsule_root.join("current-version.tmp");
     fs::write(&temp, format!("{capsule_version}\n"))?;
     fs::rename(temp, current_version)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn promote_current(capsule_root: &Path, capsule_version: &str) -> Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let current = capsule_root.join("current");
+    let current_tmp = capsule_root.join("current.tmp");
+    remove_path_if_exists(&current_tmp)?;
+    symlink(Path::new("versions").join(capsule_version), &current_tmp)?;
+    rename_over_current(&current_tmp, &current)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn promote_current(capsule_root: &Path, capsule_version: &str) -> Result<()> {
+    let current = capsule_root.join("current");
+    let current_tmp = capsule_root.join("current.tmp");
+    remove_path_if_exists(&current_tmp)?;
+    copy_dir_recursive(
+        &capsule_root.join("versions").join(capsule_version),
+        &current_tmp,
+    )?;
+    remove_path_if_exists(&current)?;
+    fs::rename(current_tmp, current)?;
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+
+    if metadata.file_type().is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn rename_over_current(source: &Path, target: &Path) -> Result<()> {
+    match fs::rename(source, target) {
+        Ok(()) => Ok(()),
+        Err(_) if target.is_dir() => {
+            fs::remove_dir_all(target)?;
+            fs::rename(source, target)?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(not(unix))]
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else {
+            fs::copy(source_path, target_path)?;
+        }
+    }
     Ok(())
 }
 
@@ -214,6 +284,10 @@ mod tests {
             .exists());
         assert!(install_root
             .path()
+            .join("capsules/install-test/current/Cocoon.toml")
+            .exists());
+        assert!(install_root
+            .path()
             .join("capsules/install-test/receipts/latest.json")
             .exists());
     }
@@ -248,7 +322,7 @@ cmd = "/app/bin/install-test"
         )
         .unwrap();
         fs::create_dir_all(source.join("bin")).unwrap();
-        fs::write(source.join("bin/install-test"), "binary").unwrap();
+        write_executable(source.join("bin/install-test"), b"#!/bin/sh\n").unwrap();
 
         let capsule = dir.path().join("install-test.cocoon");
         let bytes = cocoon_bundle::BundleBuilder::new(&source)
@@ -256,5 +330,23 @@ cmd = "/app/bin/install-test"
             .unwrap();
         fs::write(&capsule, bytes).unwrap();
         (dir, capsule)
+    }
+
+    fn write_executable(path: impl AsRef<Path>, content: &[u8]) -> std::io::Result<()> {
+        let path = path.as_ref();
+        fs::write(path, content)?;
+        make_executable(path)
+    }
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_path: &Path) -> std::io::Result<()> {
+        Ok(())
     }
 }

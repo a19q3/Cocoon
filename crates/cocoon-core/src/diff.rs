@@ -1,5 +1,7 @@
 use crate::capability::{PermissionAction, PermissionRule};
-use crate::manifest::CapsuleManifest;
+use crate::manifest::{
+    CapsuleManifest, NetworkDefault, PreopenConfig, PreopenRight, SchemeConfig, SchemeVisibility,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionDiff {
@@ -19,6 +21,44 @@ impl PermissionDiff {
 
     pub fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty() && self.modified.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleDiff<T> {
+    pub added: Vec<T>,
+    pub removed: Vec<T>,
+    pub modified: Vec<(T, T)>,
+}
+
+impl<T> RuleDiff<T> {
+    pub fn empty() -> Self {
+        Self {
+            added: Vec::new(),
+            removed: Vec::new(),
+            modified: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty() && self.modified.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorityDiff {
+    pub permissions: PermissionDiff,
+    pub schemes: RuleDiff<SchemeConfig>,
+    pub preopens: RuleDiff<PreopenConfig>,
+    pub network_default: Option<(NetworkDefault, NetworkDefault)>,
+}
+
+impl AuthorityDiff {
+    pub fn is_empty(&self) -> bool {
+        self.permissions.is_empty()
+            && self.schemes.is_empty()
+            && self.preopens.is_empty()
+            && self.network_default.is_none()
     }
 }
 
@@ -69,6 +109,59 @@ pub fn diff_capabilities(
     diff_permissions(old, new)
 }
 
+pub fn diff_authority(
+    old: &CapsuleManifest,
+    new: &CapsuleManifest,
+) -> crate::Result<AuthorityDiff> {
+    Ok(AuthorityDiff {
+        permissions: diff_permissions(old, new)?,
+        schemes: diff_rules(&old.schemes, &new.schemes, same_scheme_identity),
+        preopens: diff_rules(&old.preopens, &new.preopens, same_preopen_identity),
+        network_default: (old.network.default != new.network.default)
+            .then_some((old.network.default, new.network.default)),
+    })
+}
+
+fn diff_rules<T>(old_rules: &[T], new_rules: &[T], same_identity: fn(&T, &T) -> bool) -> RuleDiff<T>
+where
+    T: Clone + Ord,
+{
+    let mut old = old_rules.to_vec();
+    let mut new = new_rules.to_vec();
+    old.sort();
+    new.sort();
+
+    let mut added = Vec::new();
+    let mut modified = Vec::new();
+    for new_rule in &new {
+        if old.contains(new_rule) {
+            continue;
+        }
+
+        if let Some(old_rule) = old
+            .iter()
+            .find(|old_rule| same_identity(old_rule, new_rule))
+        {
+            modified.push((old_rule.clone(), new_rule.clone()));
+        } else {
+            added.push(new_rule.clone());
+        }
+    }
+
+    let mut removed = Vec::new();
+    for old_rule in &old {
+        if !new.contains(old_rule) && !modified.iter().any(|(old, _)| old == old_rule) {
+            removed.push(old_rule.clone());
+        }
+    }
+
+    RuleDiff {
+        added,
+        removed,
+        modified,
+    }
+}
+
 fn sorted_allowed_permissions(manifest: &CapsuleManifest) -> Vec<PermissionRule> {
     let mut permissions = manifest
         .allowed_permissions()
@@ -80,6 +173,14 @@ fn sorted_allowed_permissions(manifest: &CapsuleManifest) -> Vec<PermissionRule>
 
 fn same_target(old: &PermissionRule, new: &PermissionRule) -> bool {
     old.scheme == new.scheme && old.target == new.target
+}
+
+fn same_scheme_identity(old: &SchemeConfig, new: &SchemeConfig) -> bool {
+    old.name == new.name
+}
+
+fn same_preopen_identity(old: &PreopenConfig, new: &PreopenConfig) -> bool {
+    old.scheme == new.scheme && old.guest_path == new.guest_path
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -127,8 +228,57 @@ pub fn severity_for_permission(permission: &PermissionRule) -> Severity {
     }
 }
 
+pub fn severity_for_scheme(scheme: &SchemeConfig) -> Severity {
+    match scheme.name.as_str() {
+        "device" | "kernel" | "sudo" | "sys" => Severity::Critical,
+        "tcp" | "udp" | "network" => Severity::High,
+        "proc" | "memory" => Severity::High,
+        _ if scheme.visibility == SchemeVisibility::Readwrite => Severity::High,
+        _ if scheme.visibility == SchemeVisibility::Readonly => Severity::Medium,
+        _ => Severity::Low,
+    }
+}
+
+pub fn severity_for_preopen(preopen: &PreopenConfig) -> Severity {
+    match preopen.scheme.as_str() {
+        "device" | "kernel" | "sudo" | "sys" => Severity::Critical,
+        "tcp" | "udp" | "network" => Severity::High,
+        "file"
+            if preopen
+                .host_path
+                .as_ref()
+                .is_some_and(|path| sensitive_path(path.as_str()))
+                || sensitive_path(preopen.guest_path.as_str()) =>
+        {
+            Severity::High
+        }
+        "file" if preopen.rights.contains(&PreopenRight::Write) => Severity::High,
+        "file" => Severity::Medium,
+        _ => Severity::Low,
+    }
+}
+
+pub fn severity_for_network_default(default: NetworkDefault) -> Severity {
+    match default {
+        NetworkDefault::Allow => Severity::High,
+        NetworkDefault::Deny => Severity::Low,
+    }
+}
+
 pub fn permission_action_expanded(old: PermissionAction, new: PermissionAction) -> bool {
     action_rank(new) > action_rank(old)
+}
+
+pub fn scheme_visibility_expanded(old: SchemeVisibility, new: SchemeVisibility) -> bool {
+    visibility_rank(new) > visibility_rank(old)
+}
+
+pub fn preopen_rights_expanded(old: &[PreopenRight], new: &[PreopenRight]) -> bool {
+    new.iter().any(|right| !old.contains(right))
+}
+
+pub fn network_default_expanded(old: NetworkDefault, new: NetworkDefault) -> bool {
+    old == NetworkDefault::Deny && new == NetworkDefault::Allow
 }
 
 fn action_expanded(old: PermissionAction, new: PermissionAction) -> bool {
@@ -146,6 +296,18 @@ fn action_rank(action: PermissionAction) -> u8 {
         PermissionAction::ReadWrite => 4,
         PermissionAction::Manage => 5,
     }
+}
+
+fn visibility_rank(visibility: SchemeVisibility) -> u8 {
+    match visibility {
+        SchemeVisibility::Hidden => 0,
+        SchemeVisibility::Readonly => 1,
+        SchemeVisibility::Readwrite => 2,
+    }
+}
+
+fn sensitive_path(path: &str) -> bool {
+    path.contains("/etc/secrets") || path.contains("/home")
 }
 
 #[cfg(test)]
@@ -264,5 +426,91 @@ target = "*"
         };
 
         assert_eq!(severity_of_diff(&diff)[0].0, Severity::Critical);
+    }
+
+    #[test]
+    fn authority_diff_tracks_scheme_visibility() {
+        let old = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "a"
+version = "1.0.0"
+
+[entry]
+cmd = "/app/bin/a"
+
+[[scheme]]
+name = "log"
+visibility = "readonly"
+"#,
+        )
+        .unwrap();
+        let new = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "a"
+version = "2.0.0"
+
+[entry]
+cmd = "/app/bin/a"
+
+[[scheme]]
+name = "log"
+visibility = "readwrite"
+"#,
+        )
+        .unwrap();
+
+        let diff = diff_authority(&old, &new).unwrap();
+
+        assert!(diff.permissions.is_empty());
+        assert_eq!(diff.schemes.modified.len(), 1);
+        assert!(scheme_visibility_expanded(
+            diff.schemes.modified[0].0.visibility,
+            diff.schemes.modified[0].1.visibility
+        ));
+    }
+
+    #[test]
+    fn authority_diff_tracks_network_default() {
+        let old = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "a"
+version = "1.0.0"
+
+[entry]
+cmd = "/app/bin/a"
+
+[network]
+default = "deny"
+"#,
+        )
+        .unwrap();
+        let new = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "a"
+version = "2.0.0"
+
+[entry]
+cmd = "/app/bin/a"
+
+[network]
+default = "allow"
+"#,
+        )
+        .unwrap();
+
+        let diff = diff_authority(&old, &new).unwrap();
+
+        assert_eq!(
+            diff.network_default,
+            Some((crate::NetworkDefault::Deny, crate::NetworkDefault::Allow))
+        );
+        assert!(network_default_expanded(
+            crate::NetworkDefault::Deny,
+            crate::NetworkDefault::Allow
+        ));
     }
 }

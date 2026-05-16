@@ -111,7 +111,7 @@ fn diff_permissions_output_is_grouped_and_stable() {
     assert_eq!(
         stdout(diff),
         concat!(
-            "Permission changes detected:\n",
+            "Authority changes detected:\n",
             "\n",
             "Added permissions:\n",
             "      HIGH  allow tcp connect api.example.com:443\n",
@@ -122,6 +122,9 @@ fn diff_permissions_output_is_grouped_and_stable() {
             "\n",
             "Removed permissions:\n",
             "       LOW  allow file read /app/assets/**\n",
+            "\n",
+            "Modified schemes:\n",
+            "      HIGH  log readonly target=service-log -> log readwrite target=service-log\n",
             "\n",
             "Confirmation required: yes\n",
         )

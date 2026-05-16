@@ -128,20 +128,15 @@ fn cmd_inspect(capsule: PathBuf) -> Result<()> {
 
 fn cmd_plan(capsule: PathBuf, install_root: PathBuf) -> Result<()> {
     let bytes = std::fs::read(&capsule)?;
-    let reader = cocoon_bundle::BundleReader::from_bytes(&bytes)?;
-    let issues = reader.verify()?;
-    if issues
-        .iter()
-        .any(cocoon_bundle::VerificationIssue::is_integrity_failure)
-    {
-        println!("{}", format_verification_issues(&issues));
-        bail!("cannot plan an invalid capsule");
-    }
+    let verified = cocoon_bundle::BundleReader::from_verified_bytes(
+        &bytes,
+        cocoon_bundle::VerificationPolicy::default(),
+    )
+    .with_context(|| "cannot plan an invalid capsule")?;
+    let install_root =
+        cocoon_runtime::InstallRoot::parse(install_root).with_context(|| "invalid install root")?;
 
-    let plan = cocoon_runtime::RuntimePlan::from_bundle(
-        &reader,
-        cocoon_runtime::InstallRoot::new(install_root),
-    );
+    let plan = cocoon_runtime::RuntimePlan::from_verified_bundle(&verified, install_root);
     println!("{}", format_runtime_plan(&plan));
     Ok(())
 }
@@ -149,11 +144,21 @@ fn cmd_plan(capsule: PathBuf, install_root: PathBuf) -> Result<()> {
 fn cmd_diff_permissions(old: PathBuf, new: PathBuf) -> Result<()> {
     let old_bytes = std::fs::read(&old)?;
     let new_bytes = std::fs::read(&new)?;
-    let old_reader = cocoon_bundle::BundleReader::from_bytes(&old_bytes)?;
-    let new_reader = cocoon_bundle::BundleReader::from_bytes(&new_bytes)?;
+    let old_reader = cocoon_bundle::BundleReader::from_verified_bytes(
+        &old_bytes,
+        cocoon_bundle::VerificationPolicy::default(),
+    )
+    .with_context(|| format!("cannot diff invalid old capsule '{}'", old.display()))?
+    .into_reader();
+    let new_reader = cocoon_bundle::BundleReader::from_verified_bytes(
+        &new_bytes,
+        cocoon_bundle::VerificationPolicy::default(),
+    )
+    .with_context(|| format!("cannot diff invalid new capsule '{}'", new.display()))?
+    .into_reader();
 
-    let diff = cocoon_core::diff_permissions(&old_reader.manifest, &new_reader.manifest)?;
-    let report = cocoon_policy::format_diff_report(&diff);
+    let diff = cocoon_core::diff_authority(&old_reader.manifest, &new_reader.manifest)?;
+    let report = cocoon_policy::format_authority_diff_report(&diff);
     println!("{}", report);
     Ok(())
 }
@@ -174,6 +179,23 @@ fn format_verification_issues(issues: &[cocoon_bundle::VerificationIssue]) -> St
             }
             cocoon_bundle::VerificationIssue::ExtraFile(file) => {
                 lines.push(format!("Extra file not covered by hash manifest: {file}"));
+            }
+            cocoon_bundle::VerificationIssue::MissingEntrypoint {
+                guest_path,
+                archive_path,
+            } => {
+                lines.push(format!(
+                    "Entrypoint {guest_path} maps to missing payload file: {archive_path}"
+                ));
+            }
+            cocoon_bundle::VerificationIssue::NonExecutableEntrypoint {
+                guest_path,
+                archive_path,
+                mode,
+            } => {
+                lines.push(format!(
+                    "Entrypoint {guest_path} maps to non-executable payload file: {archive_path} mode={mode:o}"
+                ));
             }
             cocoon_bundle::VerificationIssue::Unsigned => {
                 lines.push("Bundle is unsigned (P0 signature placeholder).".to_string());
@@ -412,9 +434,13 @@ mod tests {
         let bytes = cocoon_bundle::BundleBuilder::new(source)
             .and_then(cocoon_bundle::BundleBuilder::build)
             .unwrap();
-        let reader = cocoon_bundle::BundleReader::from_bytes(&bytes).unwrap();
-        let plan = cocoon_runtime::RuntimePlan::from_bundle(
-            &reader,
+        let verified = cocoon_bundle::BundleReader::from_verified_bytes(
+            &bytes,
+            cocoon_bundle::VerificationPolicy::default(),
+        )
+        .unwrap();
+        let plan = cocoon_runtime::RuntimePlan::from_verified_bundle(
+            &verified,
             cocoon_runtime::InstallRoot::new("/pkg/cocoon"),
         );
         let output = format_runtime_plan(&plan);

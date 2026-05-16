@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "Hello from Cocoon hello-service!"
+echo "This binary would run inside a Redox namespace with declared permissions."
