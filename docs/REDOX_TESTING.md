@@ -64,6 +64,8 @@ SKIP classify Redox FD-only service launch gap inside redox
 SKIP probe Redox FD-only controlled service launch inside redox
 SKIP probe Redox FD-only installed capsule entrypoint inside redox
 SKIP cocoon run uses FD-only capsule entrypoint backend inside redox
+SKIP P1.2g log-service FD run profile inside redox
+SKIP P1.2g network-denied-service FD run profile inside redox
 SKIP audit Redox authority probe receipt inside redox
 SKIP audit Redox FD-only launch probe receipts inside redox
 SKIP recover temporary install state inside redox
@@ -272,6 +274,9 @@ The QEMU harness stages only the Redox binary and smoke capsules under
 It does not copy the full repository or host `target/` tree into `/root`.
 Required Redoxer commands expose non-zero exit status and combined stdout/stderr
 instead of degrading failed execution into `TODO` output.
+Run Redoxer/QEMU tasks serially; concurrent `redox-package`, `redox-smoke`, or
+`qemu-smoke` invocations can contend for Redoxer temporary disk state and
+produce wrapper-level failures even when the guest command exits successfully.
 
 Expected output after Redoxer is installed and the host smoke capsule exists:
 
@@ -291,6 +296,8 @@ PASS classify Redox FD-only service launch gap inside redox
 PASS/BLOCKED probe Redox FD-only controlled service launch inside redox
 PASS/BLOCKED probe Redox FD-only installed capsule entrypoint inside redox
 PASS cocoon run uses FD-only capsule entrypoint backend inside redox
+PASS P1.2g log-service FD run profile inside redox
+PASS P1.2g network-denied-service FD run profile inside redox
 PASS audit Redox authority probe receipt inside redox
 PASS redox authority probe receipt audited
 PASS audit Redox FD-only launch probe receipts inside redox
@@ -368,6 +375,8 @@ The real Redox/QEMU smoke test should eventually prove:
 - `run --enforce-redox-authority` uses the same FD-only installed-entrypoint
   backend, writes a normal `capsule_run` receipt, and keeps
   `production_arbitrary_service = false`;
+- additional `log-service` and `network-denied-service` profiles use the same
+  FD-only run backend and are verified through status, logs, and audit;
 - `audit` verifies authority, controlled FD launch, installed entrypoint FD
   launch probe, and enforced run receipt bodies, archive links, and captured
   stdout/stderr hashes;

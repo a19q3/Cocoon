@@ -15,6 +15,8 @@ fn main() {
 
 fn authority_self_test() -> Result<(), String> {
     let args = std::env::args().collect::<Vec<_>>();
+    let profile = parse_optional_string_arg(&args, "--profile")
+        .unwrap_or_else(|| "hello-service".to_string());
     let allowed_preopen_fd = parse_usize_arg(&args, "--allowed-preopen-fd")?;
     let denied_file_path = parse_string_arg(&args, "--denied-file-path")?;
     let hidden_scheme_path = parse_string_arg(&args, "--hidden-scheme-path")?;
@@ -25,6 +27,7 @@ fn authority_self_test() -> Result<(), String> {
     }
 
     println!("PASS fexec installed capsule entrypoint");
+    println!("SERVICE PROFILE {profile}");
     println!("PASS service reads declared resource");
 
     if std::fs::File::open(&denied_file_path).is_ok() {
@@ -41,6 +44,11 @@ fn authority_self_test() -> Result<(), String> {
     }
     println!("PASS undeclared tcp scheme rejected");
     Ok(())
+}
+
+fn parse_optional_string_arg(args: &[String], name: &str) -> Option<String> {
+    let index = args.iter().position(|arg| arg == name)?;
+    args.get(index + 1).cloned()
 }
 
 fn parse_string_arg(args: &[String], name: &str) -> Result<String, String> {

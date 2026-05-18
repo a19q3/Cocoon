@@ -211,7 +211,8 @@ A successful probe records `redox-enforced-capsule-entrypoint`: the installed
 capsule payload started under the restricted boundary and proved declared
 resource access plus denied ambient path and undeclared `tcp` rejection. This is
 still a probe mode; the final `redox-enforced` production label is reserved for
-`cocoon run` after multiple service profiles use the same boundary.
+`cocoon run` after the multi-profile boundary and service lifecycle semantics
+are reviewed.
 
 `cocoon run --enforce-redox-authority` is P1.2f run-backend evidence. On Redox
 it calls the same installed-entrypoint FD launch backend used by the probe,
@@ -222,6 +223,10 @@ writes a normal `capsule_run` receipt, and exposes the evidence through
 `production_arbitrary_service = false`. The default `cocoon run` path remains
 fail-closed unless `--allow-unenforced-authority` is explicitly requested for
 smoke testing or the explicit Redox FD backend flag is used.
+
+P1.2g exercises the same Redox FD run backend with additional `log-service` and
+`network-denied-service` profiles. This is multi-profile enforcement evidence,
+not a promotion to the final `redox-enforced` production label.
 
 Install, recover, audit, status, logs, run, rollback, and check-install acquire
 a per-capsule lock under the install root before reading or mutating the active

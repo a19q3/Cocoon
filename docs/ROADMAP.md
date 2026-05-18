@@ -137,6 +137,8 @@ Goal: prove Redox authority enforcement after the lifecycle is running.
 - Add `cocoon run --enforce-redox-authority` as P1.2f evidence that normal run
   receipts can be produced by the same installed-entrypoint FD backend. Keep
   `production_arbitrary_service = false` until multiple service profiles pass.
+- Add P1.2g multi-profile QEMU evidence for the same Redox FD run backend using
+  `log-service` and `network-denied-service` profiles.
 - Construct the service namespace.
 - Pass preopened handles.
 - Assert denied scheme/path access fails.

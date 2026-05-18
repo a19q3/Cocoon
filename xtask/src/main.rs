@@ -190,24 +190,85 @@ fn prepare_hello_service_v2_source() -> anyhow::Result<()> {
 }
 
 fn prepare_hello_service_fd_source() -> anyhow::Result<()> {
+    prepare_fd_service_source(
+        "target/redox-smoke/hello-service-fd-src",
+        "hello-service-fd",
+        "hello-service",
+        "hello-service",
+        "Redox FD-only capsule entrypoint fixture",
+        false,
+    )
+}
+
+fn prepare_log_service_fd_source() -> anyhow::Result<()> {
+    prepare_fd_service_source(
+        "target/redox-smoke/log-service-src",
+        "log-service",
+        "log-service",
+        "log-service",
+        "Redox FD-only log-profile service fixture",
+        true,
+    )
+}
+
+fn prepare_network_denied_service_fd_source() -> anyhow::Result<()> {
+    prepare_fd_service_source(
+        "target/redox-smoke/network-denied-service-src",
+        "network-denied-service",
+        "network-denied-service",
+        "network-denied-service",
+        "Redox FD-only network-denied service fixture",
+        false,
+    )
+}
+
+fn prepare_fd_service_source(
+    target: &str,
+    capsule_name: &str,
+    binary_name: &str,
+    profile: &str,
+    description: &str,
+    include_log_scheme: bool,
+) -> anyhow::Result<()> {
     let source_binary = std::path::Path::new("target/x86_64-unknown-redox/debug/hello-service");
-    let target = std::path::Path::new("target/redox-smoke/hello-service-fd-src");
+    let target = std::path::Path::new(target);
     remove_dir_if_exists(target)?;
     std::fs::create_dir_all(target.join("bin"))?;
-    std::fs::copy(source_binary, target.join("bin/hello-service"))?;
-    make_executable(&target.join("bin/hello-service"))?;
+    let target_binary = target.join("bin").join(binary_name);
+    std::fs::copy(source_binary, &target_binary)?;
+    make_executable(&target_binary)?;
+
+    let log_permission = if include_log_scheme {
+        format!(
+            r#"
+[[permission]]
+scheme = "log"
+action = "write"
+target = "{capsule_name}"
+
+[[scheme]]
+name = "log"
+visibility = "readwrite"
+target = "service-log"
+"#
+        )
+    } else {
+        String::new()
+    };
+
     std::fs::write(
         target.join("Cocoon.toml"),
-        r#"[capsule]
-name = "hello-service-fd"
+        format!(
+            r#"[capsule]
+name = "{capsule_name}"
 version = "0.1.0"
-description = "Redox FD-only capsule entrypoint fixture"
+description = "{description}"
 authors = ["Arthur Tsang"]
 license = "MIT"
 
 [entry]
-cmd = "/app/bin/hello-service"
-args = ["--authority-self-test"]
+cmd = "/app/bin/{binary_name}"
+args = ["--authority-self-test", "--profile", "{profile}"]
 cwd = "/app"
 
 [filesystem]
@@ -225,6 +286,7 @@ target = "/app/**"
 scheme = "rand"
 action = "read"
 target = "readonly"
+{log_permission}
 
 [[permission]]
 effect = "deny"
@@ -240,7 +302,7 @@ target = "*"
 
 [[preopen]]
 scheme = "file"
-host_path = "/pkg/cocoon/capsules/hello-service-fd/current"
+host_path = "/pkg/cocoon/capsules/{capsule_name}/current"
 guest_path = "/app"
 rights = ["read", "execute"]
 
@@ -261,7 +323,8 @@ permission_expansion_requires_confirmation = true
 events = true
 stdout = true
 stderr = true
-"#,
+"#
+        ),
     )?;
     Ok(())
 }
@@ -499,6 +562,8 @@ fn qemu_smoke() -> anyhow::Result<()> {
 
     let capsule = "target/redox-smoke/hello-service.cocoon";
     let capsule_fd = "target/redox-smoke/hello-service-fd.cocoon";
+    let capsule_log = "target/redox-smoke/log-service.cocoon";
+    let capsule_network_denied = "target/redox-smoke/network-denied-service.cocoon";
     let capsule_v2 = "target/redox-smoke/hello-service-v2.cocoon";
     let install_root = "target/redox-smoke/qemu-install";
 
@@ -517,6 +582,8 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
         println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
         println!("SKIP cocoon run uses FD-only capsule entrypoint backend inside redox");
+        println!("SKIP P1.2g log-service FD run profile inside redox");
+        println!("SKIP P1.2g network-denied-service FD run profile inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
         println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
@@ -550,6 +617,8 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
         println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
         println!("SKIP cocoon run uses FD-only capsule entrypoint backend inside redox");
+        println!("SKIP P1.2g log-service FD run profile inside redox");
+        println!("SKIP P1.2g network-denied-service FD run profile inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
         println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
@@ -585,6 +654,8 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
         println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
         println!("SKIP cocoon run uses FD-only capsule entrypoint backend inside redox");
+        println!("SKIP P1.2g log-service FD run profile inside redox");
+        println!("SKIP P1.2g network-denied-service FD run profile inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
         println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
@@ -605,6 +676,8 @@ fn qemu_smoke() -> anyhow::Result<()> {
 
     run("redoxer", &["build", "-p", "hello-service"])?;
     prepare_hello_service_fd_source()?;
+    prepare_log_service_fd_source()?;
+    prepare_network_denied_service_fd_source()?;
     run(
         "cargo",
         &[
@@ -618,15 +691,53 @@ fn qemu_smoke() -> anyhow::Result<()> {
             capsule_fd,
         ],
     )?;
+    run(
+        "cargo",
+        &[
+            "run",
+            "-p",
+            "cocoon-cli",
+            "--",
+            "build",
+            "target/redox-smoke/log-service-src",
+            "--output",
+            capsule_log,
+        ],
+    )?;
+    run(
+        "cargo",
+        &[
+            "run",
+            "-p",
+            "cocoon-cli",
+            "--",
+            "build",
+            "target/redox-smoke/network-denied-service-src",
+            "--output",
+            capsule_network_denied,
+        ],
+    )?;
 
     let cocoon_binary = "target/x86_64-unknown-redox/debug/cocoon";
     let qemu_root = "target/redox-smoke/redoxer-root";
-    prepare_qemu_redoxer_root(qemu_root, cocoon_binary, capsule, capsule_fd, capsule_v2)?;
+    prepare_qemu_redoxer_root(
+        qemu_root,
+        cocoon_binary,
+        &[
+            (capsule, "hello-service.cocoon"),
+            (capsule_fd, "hello-service-fd.cocoon"),
+            (capsule_log, "log-service.cocoon"),
+            (capsule_network_denied, "network-denied-service.cocoon"),
+            (capsule_v2, "hello-service-v2.cocoon"),
+        ],
+    )?;
 
     let qemu_folder_arg = format!("{qemu_root}:/root");
     let cocoon_binary = "/root/redoxer-root/bin/cocoon";
     let capsule = "/root/redoxer-root/capsules/hello-service.cocoon";
     let capsule_fd = "/root/redoxer-root/capsules/hello-service-fd.cocoon";
+    let capsule_log = "/root/redoxer-root/capsules/log-service.cocoon";
+    let capsule_network_denied = "/root/redoxer-root/capsules/network-denied-service.cocoon";
     let capsule_v2 = "/root/redoxer-root/capsules/hello-service-v2.cocoon";
     let install_root = "/root/redoxer-root/install";
 
@@ -685,6 +796,16 @@ fn qemu_smoke() -> anyhow::Result<()> {
          {cocoon_binary} status hello-service-fd --install-root {install_root} && \
          {cocoon_binary} logs hello-service-fd --stream stdout --install-root {install_root} && \
          {cocoon_binary} audit hello-service-fd --install-root {install_root} && \
+         {cocoon_binary} install {capsule_log} --install-root {install_root} && \
+         {cocoon_binary} run log-service --enforce-redox-authority --install-root {install_root} && \
+         {cocoon_binary} status log-service --install-root {install_root} && \
+         {cocoon_binary} logs log-service --stream stdout --install-root {install_root} && \
+         {cocoon_binary} audit log-service --install-root {install_root} && \
+         {cocoon_binary} install {capsule_network_denied} --install-root {install_root} && \
+         {cocoon_binary} run network-denied-service --enforce-redox-authority --install-root {install_root} && \
+         {cocoon_binary} status network-denied-service --install-root {install_root} && \
+         {cocoon_binary} logs network-denied-service --stream stdout --install-root {install_root} && \
+         {cocoon_binary} audit network-denied-service --install-root {install_root} && \
          {cocoon_binary} audit hello-service --install-root {install_root} && \
          mkdir -p {install_root}/.staging/hello-service-0.1.0-abandoned && \
          mkdir -p {install_root}/capsules/hello-service/current.tmp && \
@@ -992,6 +1113,22 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("TODO cocoon run uses FD-only capsule entrypoint backend inside redox");
     }
 
+    if fd_run_profile_pass(&install_run, "log-service", "log-service") {
+        println!("PASS P1.2g log-service FD run profile inside redox");
+    } else {
+        println!("TODO P1.2g log-service FD run profile inside redox");
+    }
+
+    if fd_run_profile_pass(
+        &install_run,
+        "network-denied-service",
+        "network-denied-service",
+    ) {
+        println!("PASS P1.2g network-denied-service FD run profile inside redox");
+    } else {
+        println!("TODO P1.2g network-denied-service FD run profile inside redox");
+    }
+
     if install_run.contains("latest authority probe receipt body hash")
         && install_run.contains("latest authority probe receipt archive link")
         && install_run.contains("latest authority probe stdout log hash")
@@ -1167,12 +1304,32 @@ fn qemu_smoke() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn fd_run_profile_pass(output: &str, capsule_name: &str, profile: &str) -> bool {
+    output.contains(&format!("Ran {capsule_name}@0.1.0"))
+        && output.contains("Authority enforced: true")
+        && output.contains("Authority mode: redox-enforced-capsule-entrypoint")
+        && output.contains("Authority enforced for service: true")
+        && output.contains("Production arbitrary service: false")
+        && output.contains("PASS run opened executable before restriction")
+        && output.contains("PASS run opened declared preopens before restriction")
+        && output.contains("PASS run entered manifest-derived restricted namespace")
+        && output.contains("PASS run fexeced installed capsule entrypoint")
+        && output.contains("PASS run service read declared resource")
+        && output.contains("PASS run rejected denied ambient path")
+        && output.contains("PASS run rejected undeclared scheme")
+        && output.contains(&format!("Status for {capsule_name}"))
+        && output.contains("Latest run authority mode: redox-enforced-capsule-entrypoint")
+        && output.contains("Latest run authority enforced for service: true")
+        && output.contains(&format!("Audit passed for {capsule_name}"))
+        && output.contains("latest run FD launch fexec: true")
+        && output.contains("latest run FD launch hidden scheme: true (/scheme/tcp)")
+        && output.contains(&format!("SERVICE PROFILE {profile}"))
+}
+
 fn prepare_qemu_redoxer_root(
     root: impl AsRef<std::path::Path>,
     cocoon_binary: impl AsRef<std::path::Path>,
-    capsule: impl AsRef<std::path::Path>,
-    capsule_fd: impl AsRef<std::path::Path>,
-    capsule_v2: impl AsRef<std::path::Path>,
+    capsules: &[(&str, &str)],
 ) -> anyhow::Result<()> {
     let root = root.as_ref();
     remove_dir_if_exists(root)?;
@@ -1186,9 +1343,9 @@ fn prepare_qemu_redoxer_root(
     std::fs::copy(cocoon_binary, &staged_cocoon)?;
     make_executable(&staged_cocoon)?;
 
-    std::fs::copy(capsule, capsule_dir.join("hello-service.cocoon"))?;
-    std::fs::copy(capsule_fd, capsule_dir.join("hello-service-fd.cocoon"))?;
-    std::fs::copy(capsule_v2, capsule_dir.join("hello-service-v2.cocoon"))?;
+    for (source, staged_name) in capsules {
+        std::fs::copy(source, capsule_dir.join(staged_name))?;
+    }
     Ok(())
 }
 

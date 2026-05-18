@@ -36,10 +36,11 @@ capsule entrypoint backend and records `event = "capsule_run"` with
 `authority_mode = "redox-enforced-capsule-entrypoint"`,
 `authority_enforced_for_service = true`, and
 `production_arbitrary_service = false`. On non-Redox platforms the flag fails
-closed with `Redox FD-only run backend unavailable on this platform`.
+closed with `Redox FD-only run backend unavailable on this platform`. P1.2g
+uses the same run receipt shape for additional Redox service profiles.
 
 The final production `redox-enforced` label remains reserved for later
-multi-profile arbitrary service validation. `status --json` reports the latest
+operational boundary review. `status --json` reports the latest
 authority, controlled FD launch, and capsule FD launch probe receipts
 separately. Aggregate commands use explicit automation fields such as `state`,
 `current_version`, `checks`, `stdout`, `stderr`, and `receipt_input`.
