@@ -49,12 +49,6 @@ PASS cocoon-cli redox cargo check
 TODO redox link probe binary link (requires Redox C sysroot/toolchain)
 TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
 
-== Redoxer smoke ==
-SKIP redoxer available (install with `cargo install redoxer`)
-SKIP redoxer build redox-link-probe
-SKIP redoxer build cocoon-cli
-SKIP redoxer run cocoon --help
-
 == QEMU smoke ==
 SKIP boot redox qemu (install with `cargo install redoxer`)
 SKIP run cocoon verify inside redox
@@ -69,6 +63,7 @@ SKIP probe Redox authority inside redox
 SKIP classify Redox FD-only service launch gap inside redox
 SKIP probe Redox FD-only controlled service launch inside redox
 SKIP probe Redox FD-only installed capsule entrypoint inside redox
+SKIP cocoon run uses FD-only capsule entrypoint backend inside redox
 SKIP audit Redox authority probe receipt inside redox
 SKIP audit Redox FD-only launch probe receipts inside redox
 SKIP recover temporary install state inside redox
@@ -85,6 +80,11 @@ SKIP reject missing rollback version inside redox
 SKIP reject tampered install inside redox
 SKIP collect receipts/logs
 ```
+
+The direct Redox binary link TODOs are reported but not executed by the
+integrated smoke gate because the current native artifact path is Redoxer.
+Run `cargo xtask redoxer-smoke` separately when checking only Redoxer build/run
+readiness.
 
 If either Redox target `cargo check` line is replaced by TODO, install the Rust
 target:
@@ -267,6 +267,12 @@ pkgar/Cookbook integration remains a separate payload packaging alignment item.
 cargo xtask qemu-smoke
 ```
 
+The QEMU harness stages only the Redox binary and smoke capsules under
+`target/redox-smoke/redoxer-root`, then maps that directory through Redoxer.
+It does not copy the full repository or host `target/` tree into `/root`.
+Required Redoxer commands expose non-zero exit status and combined stdout/stderr
+instead of degrading failed execution into `TODO` output.
+
 Expected output after Redoxer is installed and the host smoke capsule exists:
 
 ```text
@@ -284,6 +290,7 @@ PASS probe Redox authority inside redox
 PASS classify Redox FD-only service launch gap inside redox
 PASS/BLOCKED probe Redox FD-only controlled service launch inside redox
 PASS/BLOCKED probe Redox FD-only installed capsule entrypoint inside redox
+PASS cocoon run uses FD-only capsule entrypoint backend inside redox
 PASS audit Redox authority probe receipt inside redox
 PASS redox authority probe receipt audited
 PASS audit Redox FD-only launch probe receipts inside redox
@@ -358,8 +365,12 @@ The real Redox/QEMU smoke test should eventually prove:
   restriction, fexecs it under a manifest-derived restricted namespace, and
   records `redox-enforced-capsule-entrypoint` evidence while keeping
   production `cocoon run` fail-closed;
-- `audit` verifies authority, controlled FD launch, and installed entrypoint FD
-  launch probe receipt bodies, archive links, and captured stdout/stderr hashes;
+- `run --enforce-redox-authority` uses the same FD-only installed-entrypoint
+  backend, writes a normal `capsule_run` receipt, and keeps
+  `production_arbitrary_service = false`;
+- `audit` verifies authority, controlled FD launch, installed entrypoint FD
+  launch probe, and enforced run receipt bodies, archive links, and captured
+  stdout/stderr hashes;
 - constructed Redox namespace;
 - preopened handles passed to the service;
 - stdout/stderr log capture;

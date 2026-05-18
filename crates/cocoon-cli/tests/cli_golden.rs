@@ -443,6 +443,24 @@ fn inspect_verify_and_strict_verify_outputs_are_stable() {
         "{unenforced_run_stderr}"
     );
 
+    let enforced_run = assert_failure(
+        cocoon()
+            .args(["run", "hello-service", "--enforce-redox-authority"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon enforced run can be executed on a non-Redox host"),
+    );
+    let enforced_run_stderr = stderr(enforced_run);
+    assert!(
+        enforced_run_stderr.contains("failed to run capsule 'hello-service'"),
+        "{enforced_run_stderr}"
+    );
+    assert!(
+        enforced_run_stderr.contains("Redox FD-only run backend unavailable on this platform"),
+        "{enforced_run_stderr}"
+    );
+
     let run = assert_success(
         cocoon()
             .args(["run", "hello-service", "--allow-unenforced-authority"])

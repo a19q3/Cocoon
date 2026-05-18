@@ -94,6 +94,9 @@ enum Commands {
         /// Execute with the current smoke runner even though Redox namespace/preopen enforcement is not implemented
         #[arg(long)]
         allow_unenforced_authority: bool,
+        /// Execute through the Redox FD-only capsule entrypoint backend
+        #[arg(long)]
+        enforce_redox_authority: bool,
         /// Ed25519 signing key JSON used to sign the run receipt
         #[arg(long)]
         receipt_signing_key: Option<PathBuf>,
@@ -427,6 +430,7 @@ fn main() -> Result<()> {
         Commands::Run {
             capsule_name,
             allow_unenforced_authority,
+            enforce_redox_authority,
             receipt_signing_key,
             json,
             install_root,
@@ -434,6 +438,7 @@ fn main() -> Result<()> {
             capsule_name,
             install_root,
             allow_unenforced_authority,
+            enforce_redox_authority,
             receipt_signing_key,
             json,
         ),
@@ -839,6 +844,7 @@ fn cmd_run(
     capsule_name: String,
     install_root: PathBuf,
     allow_unenforced_authority: bool,
+    enforce_redox_authority: bool,
     receipt_signing_key: Option<PathBuf>,
     json: bool,
 ) -> Result<()> {
@@ -849,6 +855,7 @@ fn cmd_run(
         &install_root,
         cocoon_runtime::RunOptions {
             allow_unenforced_authority,
+            enforce_redox_authority,
         },
         receipt_signing,
     )
@@ -1676,6 +1683,35 @@ fn format_run_receipt(receipt: &cocoon_runtime::RunReceipt) -> String {
     ));
     lines.push(format!("Authority mode: {}", receipt.body.authority_mode));
     lines.push(format!(
+        "Authority enforced for service: {}",
+        receipt.body.authority_enforced_for_service
+    ));
+    lines.push(format!(
+        "Production arbitrary service: {}",
+        receipt.body.production_arbitrary_service
+    ));
+    if receipt.body.open_executable_before_restriction {
+        lines.push("PASS run opened executable before restriction".to_string());
+    }
+    if receipt.body.open_declared_preopens_before_restriction {
+        lines.push("PASS run opened declared preopens before restriction".to_string());
+    }
+    if receipt.body.entered_restricted_namespace {
+        lines.push("PASS run entered manifest-derived restricted namespace".to_string());
+    }
+    if receipt.body.exec_from_fd_succeeded {
+        lines.push("PASS run fexeced installed capsule entrypoint".to_string());
+    }
+    if receipt.body.allowed_preopen_read {
+        lines.push("PASS run service read declared resource".to_string());
+    }
+    if receipt.body.denied_file_rejected {
+        lines.push("PASS run rejected denied ambient path".to_string());
+    }
+    if receipt.body.hidden_scheme_rejected {
+        lines.push("PASS run rejected undeclared scheme".to_string());
+    }
+    lines.push(format!(
         "Exit code: {}",
         receipt
             .body
@@ -1747,6 +1783,16 @@ fn format_status_report(status: &cocoon_runtime::ServiceStatusReport) -> String 
             "Latest run authority mode: {}",
             receipt.body.authority_mode
         ));
+        lines.push(format!(
+            "Latest run production arbitrary service: {}",
+            receipt.body.production_arbitrary_service
+        ));
+        if receipt.body.authority_enforced_for_service {
+            lines.push(format!(
+                "Latest run authority enforced for service: {}",
+                receipt.body.authority_enforced_for_service
+            ));
+        }
         lines.push(format!("Latest run stdout: {}", receipt.body.stdout_log));
         lines.push(format!(
             "Latest run stdout hash: {}",
@@ -2174,6 +2220,18 @@ mod tests {
                 args: Vec::new(),
                 authority_enforced: false,
                 authority_mode: "smoke-unenforced".to_string(),
+                authority_enforced_for_service: false,
+                production_arbitrary_service: false,
+                open_executable_before_restriction: false,
+                open_declared_preopens_before_restriction: false,
+                entered_restricted_namespace: false,
+                exec_from_fd_attempted: false,
+                exec_from_fd_succeeded: false,
+                allowed_preopen_read: false,
+                denied_file_path: String::new(),
+                denied_file_rejected: false,
+                hidden_scheme_path: String::new(),
+                hidden_scheme_rejected: false,
                 exit_code: Some(0),
                 success: true,
                 stdout_log: "/pkg/cocoon/logs/stdout.log".to_string(),
@@ -2193,6 +2251,8 @@ mod tests {
         assert!(output.contains("Event: capsule_run"));
         assert!(output.contains("Authority enforced: false"));
         assert!(output.contains("Authority mode: smoke-unenforced"));
+        assert!(output.contains("Authority enforced for service: false"));
+        assert!(output.contains("Production arbitrary service: false"));
         assert!(output.contains("Exit code: 0"));
         assert!(output.contains("Success: true"));
         assert!(output.contains("Stdout hash: blake3:stdout"));
@@ -2229,6 +2289,18 @@ mod tests {
                 args: Vec::new(),
                 authority_enforced: false,
                 authority_mode: "smoke-unenforced".to_string(),
+                authority_enforced_for_service: false,
+                production_arbitrary_service: false,
+                open_executable_before_restriction: false,
+                open_declared_preopens_before_restriction: false,
+                entered_restricted_namespace: false,
+                exec_from_fd_attempted: false,
+                exec_from_fd_succeeded: false,
+                allowed_preopen_read: false,
+                denied_file_path: String::new(),
+                denied_file_rejected: false,
+                hidden_scheme_path: String::new(),
+                hidden_scheme_rejected: false,
                 exit_code: Some(0),
                 success: true,
                 stdout_log: "/pkg/cocoon/logs/stdout.log".to_string(),
@@ -2262,6 +2334,7 @@ mod tests {
         assert!(output.contains("Latest run receipt: blake3:run"));
         assert!(output.contains("Latest run authority enforced: false"));
         assert!(output.contains("Latest run authority mode: smoke-unenforced"));
+        assert!(output.contains("Latest run production arbitrary service: false"));
         assert!(output.contains("Latest run stdout hash: blake3:stdout"));
         assert!(output.contains("Latest run stderr hash: blake3:stderr"));
         assert!(output.contains("Latest authority probe receipt: <none>"));

@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cocoon_bundle::SignatureMetadata;
 use cocoon_core::{CapsuleManifest, CapsuleName, GuestPath, hash_bytes};
 
+use crate::authority::run_redox_capsule_fd_launch_backend;
 use crate::install::acquire_capsule_lock;
 use crate::receipt::{ReceiptSigningOptions, sign_receipt_body};
 use crate::{Result, RuntimeError};
@@ -31,6 +32,30 @@ pub struct RunReceiptBody {
     pub args: Vec<String>,
     pub authority_enforced: bool,
     pub authority_mode: String,
+    #[serde(default)]
+    pub authority_enforced_for_service: bool,
+    #[serde(default)]
+    pub production_arbitrary_service: bool,
+    #[serde(default)]
+    pub open_executable_before_restriction: bool,
+    #[serde(default)]
+    pub open_declared_preopens_before_restriction: bool,
+    #[serde(default)]
+    pub entered_restricted_namespace: bool,
+    #[serde(default)]
+    pub exec_from_fd_attempted: bool,
+    #[serde(default)]
+    pub exec_from_fd_succeeded: bool,
+    #[serde(default)]
+    pub allowed_preopen_read: bool,
+    #[serde(default)]
+    pub denied_file_path: String,
+    #[serde(default)]
+    pub denied_file_rejected: bool,
+    #[serde(default)]
+    pub hidden_scheme_path: String,
+    #[serde(default)]
+    pub hidden_scheme_rejected: bool,
     pub exit_code: Option<i32>,
     pub success: bool,
     pub stdout_log: String,
@@ -52,16 +77,19 @@ pub struct InstalledVerification {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RunOptions {
     pub allow_unenforced_authority: bool,
+    pub enforce_redox_authority: bool,
 }
 
 impl RunOptions {
     fn authority_enforced(self) -> bool {
-        !self.allow_unenforced_authority
+        self.enforce_redox_authority
     }
 
     fn authority_mode(self) -> &'static str {
         if self.allow_unenforced_authority {
             "smoke-unenforced"
+        } else if self.enforce_redox_authority {
+            "redox-enforced-capsule-entrypoint"
         } else {
             "redox-enforced"
         }
@@ -157,6 +185,15 @@ pub fn run_installed_capsule_with_options_and_receipt_signing(
     options: RunOptions,
     receipt_signing: ReceiptSigningOptions,
 ) -> Result<RunReceipt> {
+    validate_run_authority_options(options)?;
+    if options.enforce_redox_authority {
+        return run_installed_capsule_with_redox_fd_backend(
+            capsule_name,
+            install_root,
+            receipt_signing,
+        );
+    }
+
     let _lock = acquire_capsule_lock(install_root, capsule_name.as_str())?;
     let capsule_root = install_root.join("capsules").join(capsule_name.as_str());
     let current_root = capsule_root.join("current");
@@ -195,6 +232,18 @@ pub fn run_installed_capsule_with_options_and_receipt_signing(
         args: manifest.entry.args.clone(),
         authority_enforced: options.authority_enforced(),
         authority_mode: options.authority_mode().to_string(),
+        authority_enforced_for_service: false,
+        production_arbitrary_service: false,
+        open_executable_before_restriction: false,
+        open_declared_preopens_before_restriction: false,
+        entered_restricted_namespace: false,
+        exec_from_fd_attempted: false,
+        exec_from_fd_succeeded: false,
+        allowed_preopen_read: false,
+        denied_file_path: String::new(),
+        denied_file_rejected: false,
+        hidden_scheme_path: String::new(),
+        hidden_scheme_rejected: false,
         exit_code: output.status.code(),
         success: output.status.success(),
         stdout_log: stdout_log.display().to_string(),
@@ -218,6 +267,76 @@ pub fn run_installed_capsule_with_options_and_receipt_signing(
     write_run_receipt(&capsule_root, &run_id, &receipt)?;
 
     Ok(receipt)
+}
+
+fn run_installed_capsule_with_redox_fd_backend(
+    capsule_name: &CapsuleName,
+    install_root: &Path,
+    receipt_signing: ReceiptSigningOptions,
+) -> Result<RunReceipt> {
+    let _lock = acquire_capsule_lock(install_root, capsule_name.as_str())?;
+    verify_installed_capsule_unlocked(capsule_name, install_root)?;
+    let backend = run_redox_capsule_fd_launch_backend(capsule_name, install_root, "runs")?;
+    if !backend.service_enforced {
+        return Err(RuntimeError::UnenforcedAuthority(format!(
+            "Redox FD-only run backend did not enforce the service boundary: {}",
+            backend.failure_message
+        )));
+    }
+
+    let capsule_root = install_root.join("capsules").join(capsule_name.as_str());
+    let receipt_id = backend.receipt_id.clone();
+    let body = RunReceiptBody {
+        capsule_name: backend.capsule_name,
+        capsule_version: backend.capsule_version,
+        command: backend.command,
+        args: backend.args,
+        authority_enforced: true,
+        authority_mode: "redox-enforced-capsule-entrypoint".to_string(),
+        authority_enforced_for_service: backend.service_enforced,
+        production_arbitrary_service: false,
+        open_executable_before_restriction: backend.open_executable_before_restriction,
+        open_declared_preopens_before_restriction: backend
+            .open_declared_preopens_before_restriction,
+        entered_restricted_namespace: backend.entered_restricted_namespace,
+        exec_from_fd_attempted: backend.exec_from_fd_attempted,
+        exec_from_fd_succeeded: backend.exec_from_fd_succeeded,
+        allowed_preopen_read: backend.allowed_preopen_read,
+        denied_file_path: backend.denied_file_path,
+        denied_file_rejected: backend.denied_file_rejected,
+        hidden_scheme_path: backend.hidden_scheme_path,
+        hidden_scheme_rejected: backend.hidden_scheme_rejected,
+        exit_code: backend.child_exit_code,
+        success: backend.success,
+        stdout_log: backend.stdout_log,
+        stdout_hash: backend.stdout_hash,
+        stderr_log: backend.stderr_log,
+        stderr_hash: backend.stderr_hash,
+        started_at: backend.started_at,
+        finished_at: backend.finished_at,
+        runtime_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let body_hash = hash_bytes(&canonical_run_receipt_body_bytes(&body)?);
+    let event = "capsule_run".to_string();
+    let signature = sign_receipt_body(&event, &body, &receipt_signing)?;
+    let receipt = RunReceipt {
+        receipt_version: 1,
+        event,
+        body,
+        body_hash,
+        signature,
+    };
+    write_run_receipt(&capsule_root, &receipt_id, &receipt)?;
+    Ok(receipt)
+}
+
+fn validate_run_authority_options(options: RunOptions) -> Result<()> {
+    if options.allow_unenforced_authority && options.enforce_redox_authority {
+        return Err(RuntimeError::UnenforcedAuthority(
+            "--allow-unenforced-authority conflicts with --enforce-redox-authority".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn enforce_run_authority(options: RunOptions) -> Result<()> {
@@ -422,6 +541,7 @@ mod tests {
             install_root.path(),
             RunOptions {
                 allow_unenforced_authority: true,
+                enforce_redox_authority: false,
             },
         )
         .unwrap();

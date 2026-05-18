@@ -134,6 +134,9 @@ Goal: prove Redox authority enforcement after the lifecycle is running.
   a manifest-derived restricted namespace, recording
   `redox-enforced-capsule-entrypoint` without promoting final production
   `redox-enforced` yet.
+- Add `cocoon run --enforce-redox-authority` as P1.2f evidence that normal run
+  receipts can be produced by the same installed-entrypoint FD backend. Keep
+  `production_arbitrary_service = false` until multiple service profiles pass.
 - Construct the service namespace.
 - Pass preopened handles.
 - Assert denied scheme/path access fails.

@@ -268,7 +268,7 @@ stderr = true
 
 fn redox_target_smoke() -> anyhow::Result<()> {
     print_section("Redox target smoke");
-    let mut any_todo = false;
+    let mut missing_target = false;
 
     if run_optional(
         "cargo",
@@ -279,7 +279,7 @@ fn redox_target_smoke() -> anyhow::Result<()> {
         println!(
             "TODO redox link probe cargo check (install target with `rustup target add {REDOX_TARGET}`)"
         );
-        any_todo = true;
+        missing_target = true;
     }
 
     if run_optional(
@@ -291,34 +291,15 @@ fn redox_target_smoke() -> anyhow::Result<()> {
         println!(
             "TODO cocoon-cli redox cargo check (install target with `rustup target add {REDOX_TARGET}`)"
         );
-        any_todo = true;
+        missing_target = true;
     }
 
-    if run_optional(
-        "cargo",
-        &["build", "-p", "redox-link-probe", "--target", REDOX_TARGET],
-    )? {
-        println!("PASS redox link probe binary link");
-    } else {
-        println!("TODO redox link probe binary link (requires Redox C sysroot/toolchain)");
-        any_todo = true;
-    }
+    println!("TODO redox link probe binary link (requires Redox C sysroot/toolchain)");
+    println!("TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)");
 
-    if run_optional(
-        "cargo",
-        &["build", "-p", "cocoon-cli", "--target", REDOX_TARGET],
-    )? {
-        println!("PASS cocoon-cli redox binary link");
-    } else {
-        println!("TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)");
-        any_todo = true;
-    }
-
-    redoxer_smoke()?;
-
-    if any_todo {
+    if missing_target {
         anyhow::bail!(
-            "Some Redox target smoke checks were skipped. Install the Redox toolchain to run them."
+            "Some Redox target cargo-check smoke checks were skipped. Install the Redox target with `rustup target add {REDOX_TARGET}`."
         );
     }
 
@@ -351,7 +332,10 @@ fn redoxer_smoke() -> anyhow::Result<()> {
     }
 
     let help = run_optional_capture("redoxer", &["run", "-p", "cocoon-cli", "--", "--help"])?;
-    if help.contains("Usage:") && help.contains("Commands:") {
+    if help.status.success()
+        && help.combined.contains("Usage:")
+        && help.combined.contains("Commands:")
+    {
         println!("PASS redoxer run cocoon --help");
     } else {
         println!("TODO redoxer run cocoon --help");
@@ -532,6 +516,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
         println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
+        println!("SKIP cocoon run uses FD-only capsule entrypoint backend inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
         println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
@@ -564,6 +549,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
         println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
+        println!("SKIP cocoon run uses FD-only capsule entrypoint backend inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
         println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
@@ -598,6 +584,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
         println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
+        println!("SKIP cocoon run uses FD-only capsule entrypoint backend inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
         println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
@@ -632,15 +619,39 @@ fn qemu_smoke() -> anyhow::Result<()> {
         ],
     )?;
 
-    let verify = run_optional_capture(
-        "redoxer",
-        &["run", "-p", "cocoon-cli", "--", "verify", capsule],
-    )?;
-    let plan = run_optional_capture(
-        "redoxer",
-        &["run", "-p", "cocoon-cli", "--", "plan", capsule],
-    )?;
     let cocoon_binary = "target/x86_64-unknown-redox/debug/cocoon";
+    let qemu_root = "target/redox-smoke/redoxer-root";
+    prepare_qemu_redoxer_root(qemu_root, cocoon_binary, capsule, capsule_fd, capsule_v2)?;
+
+    let qemu_folder_arg = format!("{qemu_root}:/root");
+    let cocoon_binary = "/root/redoxer-root/bin/cocoon";
+    let capsule = "/root/redoxer-root/capsules/hello-service.cocoon";
+    let capsule_fd = "/root/redoxer-root/capsules/hello-service-fd.cocoon";
+    let capsule_v2 = "/root/redoxer-root/capsules/hello-service-v2.cocoon";
+    let install_root = "/root/redoxer-root/install";
+
+    let verify = run_required_capture(
+        "redoxer",
+        &[
+            "exec",
+            "--folder",
+            qemu_folder_arg.as_str(),
+            cocoon_binary,
+            "verify",
+            capsule,
+        ],
+    )?;
+    let plan = run_required_capture(
+        "redoxer",
+        &[
+            "exec",
+            "--folder",
+            qemu_folder_arg.as_str(),
+            cocoon_binary,
+            "plan",
+            capsule,
+        ],
+    )?;
     let install_run_command = format!(
         "{cocoon_binary} status hello-service --install-root {install_root} && \
          if {cocoon_binary} check-install hello-service --install-root {install_root}; then \
@@ -670,6 +681,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
          {cocoon_binary} probe-fd-launch hello-service --install-root {install_root} && \
          {cocoon_binary} install {capsule_fd} --install-root {install_root} && \
          {cocoon_binary} probe-capsule-fd-launch hello-service-fd --install-root {install_root} && \
+         {cocoon_binary} run hello-service-fd --enforce-redox-authority --install-root {install_root} && \
+         {cocoon_binary} status hello-service-fd --install-root {install_root} && \
+         {cocoon_binary} logs hello-service-fd --stream stdout --install-root {install_root} && \
          {cocoon_binary} audit hello-service-fd --install-root {install_root} && \
          {cocoon_binary} audit hello-service --install-root {install_root} && \
          mkdir -p {install_root}/.staging/hello-service-0.1.0-abandoned && \
@@ -786,12 +800,12 @@ fn qemu_smoke() -> anyhow::Result<()> {
              echo PASS tampered status rejected; \
          fi"
     );
-    let install_run = run_optional_capture(
+    let install_run = run_required_capture(
         "redoxer",
         &[
             "exec",
             "--folder",
-            ".:/root",
+            qemu_folder_arg.as_str(),
             "/usr/bin/sh",
             "-c",
             install_run_command.as_str(),
@@ -948,6 +962,34 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("BLOCKED probe Redox FD-only installed capsule entrypoint inside redox");
     } else {
         println!("TODO probe Redox FD-only installed capsule entrypoint inside redox");
+    }
+
+    if install_run.contains("Ran hello-service-fd@0.1.0")
+        && install_run.contains("Authority enforced: true")
+        && install_run.contains("Authority mode: redox-enforced-capsule-entrypoint")
+        && install_run.contains("Authority enforced for service: true")
+        && install_run.contains("Production arbitrary service: false")
+        && install_run.contains("PASS run opened executable before restriction")
+        && install_run.contains("PASS run opened declared preopens before restriction")
+        && install_run.contains("PASS run entered manifest-derived restricted namespace")
+        && install_run.contains("PASS run fexeced installed capsule entrypoint")
+        && install_run.contains("PASS run service read declared resource")
+        && install_run.contains("PASS run rejected denied ambient path")
+        && install_run.contains("PASS run rejected undeclared scheme")
+        && install_run.contains("Latest run authority mode: redox-enforced-capsule-entrypoint")
+        && install_run.contains("Latest run authority enforced for service: true")
+        && install_run.contains("PASS fexec installed capsule entrypoint")
+        && install_run.contains("PASS service reads declared resource")
+        && install_run.contains("PASS denied ambient path rejected")
+        && install_run.contains("PASS undeclared tcp scheme rejected")
+        && install_run.contains("latest run receipt body hash")
+        && install_run.contains("latest run stdout log hash")
+        && install_run.contains("latest run FD launch fexec: true")
+        && install_run.contains("latest run FD launch hidden scheme: true (/scheme/tcp)")
+    {
+        println!("PASS cocoon run uses FD-only capsule entrypoint backend inside redox");
+    } else {
+        println!("TODO cocoon run uses FD-only capsule entrypoint backend inside redox");
     }
 
     if install_run.contains("latest authority probe receipt body hash")
@@ -1125,6 +1167,31 @@ fn qemu_smoke() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn prepare_qemu_redoxer_root(
+    root: impl AsRef<std::path::Path>,
+    cocoon_binary: impl AsRef<std::path::Path>,
+    capsule: impl AsRef<std::path::Path>,
+    capsule_fd: impl AsRef<std::path::Path>,
+    capsule_v2: impl AsRef<std::path::Path>,
+) -> anyhow::Result<()> {
+    let root = root.as_ref();
+    remove_dir_if_exists(root)?;
+
+    let bin_dir = root.join("bin");
+    let capsule_dir = root.join("capsules");
+    std::fs::create_dir_all(&bin_dir)?;
+    std::fs::create_dir_all(&capsule_dir)?;
+
+    let staged_cocoon = bin_dir.join("cocoon");
+    std::fs::copy(cocoon_binary, &staged_cocoon)?;
+    make_executable(&staged_cocoon)?;
+
+    std::fs::copy(capsule, capsule_dir.join("hello-service.cocoon"))?;
+    std::fs::copy(capsule_fd, capsule_dir.join("hello-service-fd.cocoon"))?;
+    std::fs::copy(capsule_v2, capsule_dir.join("hello-service-v2.cocoon"))?;
+    Ok(())
+}
+
 fn print_section(name: &str) {
     println!();
     println!("== {name} ==");
@@ -1150,7 +1217,12 @@ fn run_optional(program: &str, args: &[&str]) -> anyhow::Result<bool> {
     Ok(status.success())
 }
 
-fn run_optional_capture(program: &str, args: &[&str]) -> anyhow::Result<String> {
+struct CapturedCommand {
+    status: std::process::ExitStatus,
+    combined: String,
+}
+
+fn run_optional_capture(program: &str, args: &[&str]) -> anyhow::Result<CapturedCommand> {
     let output = Command::new(program).args(args).output()?;
     let mut combined = String::new();
     combined.push_str(&String::from_utf8_lossy(&output.stdout));
@@ -1158,9 +1230,40 @@ fn run_optional_capture(program: &str, args: &[&str]) -> anyhow::Result<String> 
 
     if std::env::var_os("COCOON_SMOKE_VERBOSE").is_some() {
         print!("{combined}");
+        if !output.status.success() {
+            eprintln!(
+                "command exited with status {}: {}",
+                output.status,
+                command_display(program, args)
+            );
+        }
     }
 
-    Ok(combined)
+    Ok(CapturedCommand {
+        status: output.status,
+        combined,
+    })
+}
+
+fn run_required_capture(program: &str, args: &[&str]) -> anyhow::Result<String> {
+    let captured = run_optional_capture(program, args)?;
+    if !captured.status.success() {
+        anyhow::bail!(
+            "command failed with status {}: {}\n{}",
+            captured.status,
+            command_display(program, args),
+            captured.combined
+        );
+    }
+    Ok(captured.combined)
+}
+
+fn command_display(program: &str, args: &[&str]) -> String {
+    if args.is_empty() {
+        program.to_string()
+    } else {
+        format!("{program} {}", args.join(" "))
+    }
 }
 
 fn remove_dir_if_exists(path: impl AsRef<std::path::Path>) -> anyhow::Result<()> {

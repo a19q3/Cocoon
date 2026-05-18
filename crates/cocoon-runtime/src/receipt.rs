@@ -88,6 +88,17 @@ pub(crate) fn verify_receipt_signature_with_policy<T: serde::Serialize>(
     label: &str,
     policy: &ReceiptVerificationPolicy,
 ) -> Result<()> {
+    let bytes = serde_json::to_vec(body)?;
+    verify_receipt_signature_bytes_with_policy(event, &bytes, signature, label, policy)
+}
+
+pub(crate) fn verify_receipt_signature_bytes_with_policy(
+    event: &str,
+    body_bytes: &[u8],
+    signature: &Option<SignatureMetadata>,
+    label: &str,
+    policy: &ReceiptVerificationPolicy,
+) -> Result<()> {
     let Some(signature) = signature else {
         if policy.require_signatures {
             return Err(RuntimeError::ReceiptAudit(format!(
@@ -96,12 +107,11 @@ pub(crate) fn verify_receipt_signature_with_policy<T: serde::Serialize>(
         }
         return Ok(());
     };
-    let bytes = serde_json::to_vec(body)?;
     cocoon_bundle::verify_context_signature(
         signature,
         RECEIPT_SIGNATURE_ALGORITHM,
         receipt_context(event).as_bytes(),
-        &bytes,
+        body_bytes,
     )
     .map_err(|error| {
         RuntimeError::ReceiptAudit(format!("{label} receipt signature invalid: {error}"))

@@ -5,7 +5,8 @@ use cocoon_core::{CapsuleName, hash_bytes};
 
 use crate::install::acquire_capsule_lock;
 use crate::receipt::{
-    ReceiptVerificationPolicy, signature_public_key, verify_receipt_signature_with_policy,
+    ReceiptVerificationPolicy, signature_public_key, verify_receipt_signature_bytes_with_policy,
+    verify_receipt_signature_with_policy,
 };
 use crate::run::verify_installed_capsule_unlocked;
 use crate::{
@@ -245,6 +246,41 @@ pub fn audit_capsule_with_receipt_policy(
                 receipt.body.authority_enforced, receipt.body.authority_mode
             ),
         });
+        if receipt.body.authority_enforced_for_service {
+            checks.push(AuditCheck {
+                name: "latest run FD launch executable preopen".to_string(),
+                detail: receipt.body.open_executable_before_restriction.to_string(),
+            });
+            checks.push(AuditCheck {
+                name: "latest run FD launch declared preopens".to_string(),
+                detail: receipt
+                    .body
+                    .open_declared_preopens_before_restriction
+                    .to_string(),
+            });
+            checks.push(AuditCheck {
+                name: "latest run FD launch namespace".to_string(),
+                detail: receipt.body.entered_restricted_namespace.to_string(),
+            });
+            checks.push(AuditCheck {
+                name: "latest run FD launch fexec".to_string(),
+                detail: receipt.body.exec_from_fd_succeeded.to_string(),
+            });
+            checks.push(AuditCheck {
+                name: "latest run FD launch denied path".to_string(),
+                detail: format!(
+                    "{} ({})",
+                    receipt.body.denied_file_rejected, receipt.body.denied_file_path
+                ),
+            });
+            checks.push(AuditCheck {
+                name: "latest run FD launch hidden scheme".to_string(),
+                detail: format!(
+                    "{} ({})",
+                    receipt.body.hidden_scheme_rejected, receipt.body.hidden_scheme_path
+                ),
+            });
+        }
         if let Some(public_key) = signature_public_key(&receipt.signature) {
             checks.push(AuditCheck {
                 name: "latest run receipt signature".to_string(),
@@ -458,16 +494,10 @@ fn verify_run_receipt_with_policy(
     receipt: &RunReceipt,
     receipt_policy: &ReceiptVerificationPolicy,
 ) -> Result<()> {
-    let actual = hash_bytes(&serde_json::to_vec(&receipt.body)?);
-    if actual != receipt.body_hash {
-        return Err(RuntimeError::ReceiptAudit(format!(
-            "run receipt body hash mismatch: expected {}, got {actual}",
-            receipt.body_hash
-        )));
-    }
-    verify_receipt_signature_with_policy(
+    let body_bytes = verified_run_receipt_body_bytes(receipt)?;
+    verify_receipt_signature_bytes_with_policy(
         &receipt.event,
-        &receipt.body,
+        &body_bytes,
         &receipt.signature,
         "run",
         receipt_policy,
@@ -482,7 +512,142 @@ fn verify_run_receipt_with_policy(
         &receipt.body.stderr_hash,
         "stderr",
     )?;
+    verify_run_fd_launch_evidence(receipt)?;
     Ok(())
+}
+
+fn verified_run_receipt_body_bytes(receipt: &RunReceipt) -> Result<Vec<u8>> {
+    let current = serde_json::to_vec(&receipt.body)?;
+    let current_hash = hash_bytes(&current);
+    if current_hash == receipt.body_hash {
+        return Ok(current);
+    }
+
+    if let Some(legacy) = legacy_run_receipt_body_bytes(&receipt.body)? {
+        let legacy_hash = hash_bytes(&legacy);
+        if legacy_hash == receipt.body_hash {
+            return Ok(legacy);
+        }
+    }
+
+    Err(RuntimeError::ReceiptAudit(format!(
+        "run receipt body hash mismatch: expected {}, got {current_hash}",
+        receipt.body_hash
+    )))
+}
+
+fn legacy_run_receipt_body_bytes(body: &crate::run::RunReceiptBody) -> Result<Option<Vec<u8>>> {
+    if body.authority_enforced_for_service
+        || body.production_arbitrary_service
+        || body.open_executable_before_restriction
+        || body.open_declared_preopens_before_restriction
+        || body.entered_restricted_namespace
+        || body.exec_from_fd_attempted
+        || body.exec_from_fd_succeeded
+        || body.allowed_preopen_read
+        || !body.denied_file_path.is_empty()
+        || body.denied_file_rejected
+        || !body.hidden_scheme_path.is_empty()
+        || body.hidden_scheme_rejected
+    {
+        return Ok(None);
+    }
+
+    #[derive(serde::Serialize)]
+    struct LegacyRunReceiptBody<'a> {
+        capsule_name: &'a str,
+        capsule_version: &'a str,
+        command: &'a str,
+        args: &'a [String],
+        authority_enforced: bool,
+        authority_mode: &'a str,
+        exit_code: Option<i32>,
+        success: bool,
+        stdout_log: &'a str,
+        stdout_hash: &'a str,
+        stderr_log: &'a str,
+        stderr_hash: &'a str,
+        started_at: &'a str,
+        finished_at: &'a str,
+        runtime_version: &'a str,
+    }
+
+    Ok(Some(serde_json::to_vec(&LegacyRunReceiptBody {
+        capsule_name: &body.capsule_name,
+        capsule_version: &body.capsule_version,
+        command: &body.command,
+        args: &body.args,
+        authority_enforced: body.authority_enforced,
+        authority_mode: &body.authority_mode,
+        exit_code: body.exit_code,
+        success: body.success,
+        stdout_log: &body.stdout_log,
+        stdout_hash: &body.stdout_hash,
+        stderr_log: &body.stderr_log,
+        stderr_hash: &body.stderr_hash,
+        started_at: &body.started_at,
+        finished_at: &body.finished_at,
+        runtime_version: &body.runtime_version,
+    })?))
+}
+
+fn verify_run_fd_launch_evidence(receipt: &RunReceipt) -> Result<()> {
+    if receipt.body.authority_mode == "redox-enforced-capsule-entrypoint"
+        && !receipt.body.authority_enforced_for_service
+    {
+        return Err(RuntimeError::ReceiptAudit(
+            "run receipt claims redox-enforced-capsule-entrypoint without service enforcement"
+                .to_string(),
+        ));
+    }
+
+    if !receipt.body.authority_enforced_for_service {
+        return Ok(());
+    }
+
+    let mut missing = Vec::new();
+    if !receipt.body.authority_enforced {
+        missing.push("authority_enforced");
+    }
+    if receipt.body.authority_mode != "redox-enforced-capsule-entrypoint" {
+        missing.push("authority_mode");
+    }
+    if receipt.body.production_arbitrary_service {
+        missing.push("production_arbitrary_service=false");
+    }
+    if !receipt.body.open_executable_before_restriction {
+        missing.push("open_executable_before_restriction");
+    }
+    if !receipt.body.open_declared_preopens_before_restriction {
+        missing.push("open_declared_preopens_before_restriction");
+    }
+    if !receipt.body.entered_restricted_namespace {
+        missing.push("entered_restricted_namespace");
+    }
+    if !receipt.body.exec_from_fd_attempted {
+        missing.push("exec_from_fd_attempted");
+    }
+    if !receipt.body.exec_from_fd_succeeded {
+        missing.push("exec_from_fd_succeeded");
+    }
+    if !receipt.body.allowed_preopen_read {
+        missing.push("allowed_preopen_read");
+    }
+    if !receipt.body.denied_file_rejected {
+        missing.push("denied_file_rejected");
+    }
+    if !receipt.body.hidden_scheme_rejected {
+        missing.push("hidden_scheme_rejected");
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(RuntimeError::ReceiptAudit(format!(
+            "run receipt FD launch evidence incomplete: {}",
+            missing.join(", ")
+        )))
+    }
 }
 
 fn verify_latest_run_receipt_archive_with_policy(
@@ -811,6 +976,7 @@ mod tests {
             install_root.path(),
             RunOptions {
                 allow_unenforced_authority: true,
+                enforce_redox_authority: false,
             },
         )
         .unwrap();
@@ -824,6 +990,94 @@ mod tests {
         assert!(status.latest_authority_probe_receipt.is_none());
         assert!(status.latest_fd_launch_probe_receipt.is_none());
         assert!(status.latest_capsule_fd_launch_probe_receipt.is_none());
+    }
+
+    #[test]
+    fn legacy_run_receipt_hash_without_fd_launch_fields_is_accepted() {
+        let log_dir = TempDir::new().unwrap();
+        let stdout_log = log_dir.path().join("stdout.log");
+        let stderr_log = log_dir.path().join("stderr.log");
+        fs::write(&stdout_log, b"legacy stdout\n").unwrap();
+        fs::write(&stderr_log, b"").unwrap();
+
+        let body = crate::run::RunReceiptBody {
+            capsule_name: "status-test".to_string(),
+            capsule_version: "0.1.0".to_string(),
+            command: "/app/bin/status-test".to_string(),
+            args: Vec::new(),
+            authority_enforced: false,
+            authority_mode: "smoke-unenforced".to_string(),
+            authority_enforced_for_service: false,
+            production_arbitrary_service: false,
+            open_executable_before_restriction: false,
+            open_declared_preopens_before_restriction: false,
+            entered_restricted_namespace: false,
+            exec_from_fd_attempted: false,
+            exec_from_fd_succeeded: false,
+            allowed_preopen_read: false,
+            denied_file_path: String::new(),
+            denied_file_rejected: false,
+            hidden_scheme_path: String::new(),
+            hidden_scheme_rejected: false,
+            exit_code: Some(0),
+            success: true,
+            stdout_log: stdout_log.display().to_string(),
+            stdout_hash: hash_bytes(b"legacy stdout\n"),
+            stderr_log: stderr_log.display().to_string(),
+            stderr_hash: hash_bytes(b""),
+            started_at: "unix:1".to_string(),
+            finished_at: "unix:2".to_string(),
+            runtime_version: "0.1.0".to_string(),
+        };
+
+        #[derive(serde::Serialize)]
+        struct LegacyRunReceiptBody<'a> {
+            capsule_name: &'a str,
+            capsule_version: &'a str,
+            command: &'a str,
+            args: &'a [String],
+            authority_enforced: bool,
+            authority_mode: &'a str,
+            exit_code: Option<i32>,
+            success: bool,
+            stdout_log: &'a str,
+            stdout_hash: &'a str,
+            stderr_log: &'a str,
+            stderr_hash: &'a str,
+            started_at: &'a str,
+            finished_at: &'a str,
+            runtime_version: &'a str,
+        }
+
+        let legacy_body_hash = hash_bytes(
+            &serde_json::to_vec(&LegacyRunReceiptBody {
+                capsule_name: &body.capsule_name,
+                capsule_version: &body.capsule_version,
+                command: &body.command,
+                args: &body.args,
+                authority_enforced: body.authority_enforced,
+                authority_mode: &body.authority_mode,
+                exit_code: body.exit_code,
+                success: body.success,
+                stdout_log: &body.stdout_log,
+                stdout_hash: &body.stdout_hash,
+                stderr_log: &body.stderr_log,
+                stderr_hash: &body.stderr_hash,
+                started_at: &body.started_at,
+                finished_at: &body.finished_at,
+                runtime_version: &body.runtime_version,
+            })
+            .unwrap(),
+        );
+        let receipt = crate::run::RunReceipt {
+            receipt_version: 1,
+            event: "capsule_run".to_string(),
+            body,
+            body_hash: legacy_body_hash,
+            signature: None,
+        };
+
+        verify_run_receipt_integrity(&receipt).unwrap();
     }
 
     fn fixture_capsule() -> (TempDir, PathBuf) {

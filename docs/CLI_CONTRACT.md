@@ -14,6 +14,7 @@ success:
 cocoon plan <capsule> --json
 cocoon install <capsule> --json
 cocoon run <capsule-name> --json
+cocoon run <capsule-name> --enforce-redox-authority --json
 cocoon probe-authority <capsule-name> --json
 cocoon probe-fd-exec <capsule-name> --json
 cocoon probe-fd-launch <capsule-name> --json
@@ -29,11 +30,19 @@ cocoon audit <capsule-name> --json
 Receipt-producing commands emit the same structured receipt objects written to
 disk. `probe-capsule-fd-launch` writes `event = "capsule_fd_launch_probe"` and
 uses `authority_mode = "redox-enforced-capsule-entrypoint"` only for the
-P1.2e installed-entrypoint probe, not final production `cocoon run`
-enforcement. `status --json` reports the latest authority, controlled FD
-launch, and capsule FD launch probe receipts separately. Aggregate commands use
-explicit automation fields such as `state`, `current_version`, `checks`,
-`stdout`, `stderr`, and `receipt_input`.
+P1.2e installed-entrypoint probe. `run --enforce-redox-authority` is the P1.2f
+Redox-only run backend graduation path; on Redox it uses the same FD-only
+capsule entrypoint backend and records `event = "capsule_run"` with
+`authority_mode = "redox-enforced-capsule-entrypoint"`,
+`authority_enforced_for_service = true`, and
+`production_arbitrary_service = false`. On non-Redox platforms the flag fails
+closed with `Redox FD-only run backend unavailable on this platform`.
+
+The final production `redox-enforced` label remains reserved for later
+multi-profile arbitrary service validation. `status --json` reports the latest
+authority, controlled FD launch, and capsule FD launch probe receipts
+separately. Aggregate commands use explicit automation fields such as `state`,
+`current_version`, `checks`, `stdout`, `stderr`, and `receipt_input`.
 
 ## Exit Codes
 

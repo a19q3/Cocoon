@@ -1239,7 +1239,12 @@ cmd = "/app/bin/test"
         let mut entries = entries_from_bundle(&signed_fixture_bundle(BundleSigningKey::generate()));
         let mut signature: SignatureMetadata =
             serde_json::from_slice(entries.get(SIGNATURE_NAME).unwrap()).unwrap();
-        signature.signature = format!("00{}", &signature.signature[2..]);
+        let replacement_prefix = if signature.signature.starts_with("00") {
+            "01"
+        } else {
+            "00"
+        };
+        signature.signature = format!("{replacement_prefix}{}", &signature.signature[2..]);
         entries.insert(
             SIGNATURE_NAME.to_string(),
             serde_json::to_vec_pretty(&signature).unwrap(),

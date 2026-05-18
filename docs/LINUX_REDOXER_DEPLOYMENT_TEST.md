@@ -165,6 +165,7 @@ PASS/SKIP probe Redox authority inside redox
 PASS/SKIP classify Redox FD-only service launch gap inside redox
 PASS/SKIP/BLOCKED probe Redox FD-only controlled service launch inside redox
 PASS/SKIP/BLOCKED probe Redox FD-only installed capsule entrypoint inside redox
+PASS/SKIP cocoon run uses FD-only capsule entrypoint backend inside redox
 PASS/SKIP audit Redox authority probe receipt inside redox
 PASS/SKIP audit Redox FD-only launch probe receipts inside redox
 PASS/SKIP recover temporary install state inside redox
@@ -565,6 +566,7 @@ PASS probe Redox authority inside redox
 PASS classify Redox FD-only service launch gap inside redox
 PASS/BLOCKED probe Redox FD-only controlled service launch inside redox
 PASS/BLOCKED probe Redox FD-only installed capsule entrypoint inside redox
+PASS cocoon run uses FD-only capsule entrypoint backend inside redox
 PASS audit Redox authority probe receipt inside redox
 PASS redox authority probe receipt audited
 PASS audit Redox FD-only launch probe receipts inside redox
@@ -610,10 +612,13 @@ same CLI-only flow:
 - run `cocoon probe-capsule-fd-launch` to open the installed capsule entrypoint
   before restriction, fexec the entrypoint FD under a manifest-derived
   restricted namespace, and record `redox-enforced-capsule-entrypoint`
-  evidence without changing production `cocoon run`;
-- run `cocoon audit` to verify authority, controlled FD launch, and installed
-  entrypoint FD launch probe receipt bodies, archive links, and captured
-  stdout/stderr hashes;
+  evidence;
+- run `cocoon run --enforce-redox-authority` through the same FD-only
+  installed-entrypoint backend, recording a normal `capsule_run` receipt with
+  `production_arbitrary_service = false`;
+- run `cocoon audit` to verify authority, controlled FD launch, installed
+  entrypoint FD launch probe, and enforced run receipt bodies, archive links,
+  and captured stdout/stderr hashes;
 - recover temporary install state left by an interrupted install;
 - recover with `--break-lock` to clear an explicitly stale lock;
 - confirm reinstalling the same capsule version is rejected;

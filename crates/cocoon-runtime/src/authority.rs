@@ -136,6 +136,36 @@ pub struct CapsuleFdLaunchProbeReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RedoxFdLaunchBackendReport {
+    pub capsule_name: String,
+    pub capsule_version: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub child_exit_code: Option<i32>,
+    pub success: bool,
+    pub service_enforced: bool,
+    pub open_executable_before_restriction: bool,
+    pub open_declared_preopens_before_restriction: bool,
+    pub entered_restricted_namespace: bool,
+    pub exec_from_fd_attempted: bool,
+    pub exec_from_fd_succeeded: bool,
+    pub allowed_preopen_read: bool,
+    pub allowed_preopen_guest_path: String,
+    pub denied_file_path: String,
+    pub denied_file_rejected: bool,
+    pub hidden_scheme_path: String,
+    pub hidden_scheme_rejected: bool,
+    pub failure_message: String,
+    pub stdout_log: String,
+    pub stdout_hash: String,
+    pub stderr_log: String,
+    pub stderr_hash: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub receipt_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FdLaunchProbeChildReport {
     pub entered_restricted_namespace: bool,
     pub exec_from_fd_attempted: bool,
@@ -191,6 +221,14 @@ pub fn probe_capsule_fd_launch(
     install_root: &Path,
 ) -> Result<CapsuleFdLaunchProbeReport> {
     probe_capsule_fd_launch_impl(capsule_name, install_root)
+}
+
+pub(crate) fn run_redox_capsule_fd_launch_backend(
+    capsule_name: &CapsuleName,
+    install_root: &Path,
+    log_dir_name: &str,
+) -> Result<RedoxFdLaunchBackendReport> {
+    run_redox_capsule_fd_launch_backend_impl(capsule_name, install_root, log_dir_name)
 }
 
 pub fn run_fd_launch_probe_child(
@@ -281,6 +319,17 @@ fn probe_capsule_fd_launch_impl(
 ) -> Result<CapsuleFdLaunchProbeReport> {
     Err(RuntimeError::AuthorityProbe(
         "Redox capsule FD-only launch probe unavailable on this platform".to_string(),
+    ))
+}
+
+#[cfg(not(target_os = "redox"))]
+fn run_redox_capsule_fd_launch_backend_impl(
+    _capsule_name: &CapsuleName,
+    _install_root: &Path,
+    _log_dir_name: &str,
+) -> Result<RedoxFdLaunchBackendReport> {
+    Err(RuntimeError::UnenforcedAuthority(
+        "Redox FD-only run backend unavailable on this platform".to_string(),
     ))
 }
 
@@ -539,10 +588,67 @@ fn probe_capsule_fd_launch_impl(
     capsule_name: &CapsuleName,
     install_root: &Path,
 ) -> Result<CapsuleFdLaunchProbeReport> {
+    let _lock = acquire_capsule_lock(install_root, capsule_name.as_str())?;
+    let capsule_root = install_root.join("capsules").join(capsule_name.as_str());
+    let backend =
+        run_redox_capsule_fd_launch_backend(capsule_name, install_root, "capsule-fd-launch")?;
+    let receipt_id = backend.receipt_id.clone();
+
+    let mode = if backend.service_enforced {
+        "redox-enforced-capsule-entrypoint"
+    } else {
+        "redox-capsule-fd-launch-blocked"
+    }
+    .to_string();
+    let body = FdLaunchProbeReceiptBody {
+        capsule_name: backend.capsule_name,
+        capsule_version: backend.capsule_version,
+        mode,
+        authority_enforced_for_service: backend.service_enforced,
+        production_arbitrary_service: false,
+        child_exit_code: backend.child_exit_code,
+        open_executable_before_restriction: backend.open_executable_before_restriction,
+        open_declared_preopens_before_restriction: backend
+            .open_declared_preopens_before_restriction,
+        entered_restricted_namespace: backend.entered_restricted_namespace,
+        exec_from_fd_attempted: backend.exec_from_fd_attempted,
+        exec_from_fd_succeeded: backend.exec_from_fd_succeeded,
+        allowed_preopen_read: backend.allowed_preopen_read,
+        allowed_preopen_guest_path: backend.allowed_preopen_guest_path,
+        denied_file_path: backend.denied_file_path,
+        denied_file_rejected: backend.denied_file_rejected,
+        hidden_scheme_path: backend.hidden_scheme_path,
+        hidden_scheme_rejected: backend.hidden_scheme_rejected,
+        failure_message: backend.failure_message,
+        stdout_log: backend.stdout_log,
+        stdout_hash: backend.stdout_hash,
+        stderr_log: backend.stderr_log,
+        stderr_hash: backend.stderr_hash,
+        started_at: backend.started_at,
+        finished_at: backend.finished_at,
+        runtime_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let body_hash = hash_bytes(&canonical_fd_launch_probe_receipt_body_bytes(&body)?);
+    let receipt = FdLaunchProbeReceipt {
+        receipt_version: 1,
+        event: "capsule_fd_launch_probe".to_string(),
+        body,
+        body_hash,
+        signature: None,
+    };
+    write_capsule_fd_launch_probe_receipt(&capsule_root, &receipt_id, &receipt)?;
+    Ok(CapsuleFdLaunchProbeReport { receipt })
+}
+
+#[cfg(target_os = "redox")]
+fn run_redox_capsule_fd_launch_backend_impl(
+    capsule_name: &CapsuleName,
+    install_root: &Path,
+    log_dir_name: &str,
+) -> Result<RedoxFdLaunchBackendReport> {
     let capsule_root = install_root.join("capsules").join(capsule_name.as_str());
     let current_root = capsule_root.join("current");
 
-    let lock = acquire_capsule_lock(install_root, capsule_name.as_str())?;
     verify_installed_capsule_unlocked(capsule_name, install_root)?;
     let manifest = read_installed_manifest(&current_root)?;
     let preopen = readable_file_preopen(&manifest)?;
@@ -558,7 +664,6 @@ fn probe_capsule_fd_launch_impl(
     let hidden_scheme_path = hidden_scheme_probe_path();
     let visible_schemes = manifest_fd_launch_schemes(&manifest);
     let entry_args = manifest.entry.args.clone();
-    drop(lock);
 
     let executable_fd = open_redox_fd(
         &entrypoint.display().to_string(),
@@ -570,7 +675,7 @@ fn probe_capsule_fd_launch_impl(
     )?;
 
     let run_id = format!("{}-{}", unix_seconds()?, std::process::id());
-    let logs_root = capsule_root.join("logs").join("capsule-fd-launch");
+    let logs_root = capsule_root.join("logs").join(log_dir_name);
     fs::create_dir_all(&logs_root)?;
     let stdout_log = logs_root.join(format!("{run_id}.stdout.log"));
     let stderr_log = logs_root.join(format!("{run_id}.stderr.log"));
@@ -619,32 +724,28 @@ fn probe_capsule_fd_launch_impl(
         && blocked;
     if !service_enforced && !classified_blocked {
         return Err(RuntimeError::AuthorityProbe(format!(
-            "capsule fd-launch probe failed: exit={:?}, stdout={}, stderr={}",
+            "capsule fd-launch backend failed: exit={:?}, stdout={}, stderr={}",
             output.status.code(),
             stdout_text.trim(),
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
 
-    let mode = if service_enforced {
-        "redox-enforced-capsule-entrypoint"
-    } else {
-        "redox-capsule-fd-launch-blocked"
-    }
-    .to_string();
     let failure_message = if service_enforced {
         String::new()
     } else {
         extract_capsule_blocked_line(&stdout_text)
             .unwrap_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
     };
-    let body = FdLaunchProbeReceiptBody {
+
+    Ok(RedoxFdLaunchBackendReport {
         capsule_name: manifest.capsule.name.to_string(),
         capsule_version: manifest.capsule.version.to_string(),
-        mode,
-        authority_enforced_for_service: service_enforced,
-        production_arbitrary_service: false,
+        command: manifest.entry.cmd.to_string(),
+        args: manifest.entry.args,
         child_exit_code: output.status.code(),
+        success: output.status.success(),
+        service_enforced,
         open_executable_before_restriction,
         open_declared_preopens_before_restriction: opened_preopens_before_restriction,
         entered_restricted_namespace,
@@ -663,18 +764,8 @@ fn probe_capsule_fd_launch_impl(
         stderr_hash: hash_bytes(&output.stderr),
         started_at,
         finished_at,
-        runtime_version: env!("CARGO_PKG_VERSION").to_string(),
-    };
-    let body_hash = hash_bytes(&canonical_fd_launch_probe_receipt_body_bytes(&body)?);
-    let receipt = FdLaunchProbeReceipt {
-        receipt_version: 1,
-        event: "capsule_fd_launch_probe".to_string(),
-        body,
-        body_hash,
-        signature: None,
-    };
-    write_capsule_fd_launch_probe_receipt(&capsule_root, &run_id, &receipt)?;
-    Ok(CapsuleFdLaunchProbeReport { receipt })
+        receipt_id: run_id,
+    })
 }
 
 #[cfg(target_os = "redox")]
