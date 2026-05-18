@@ -401,6 +401,26 @@ fn inspect_verify_and_strict_verify_outputs_are_stable() {
         "{fd_launch_probe_stderr}"
     );
 
+    let capsule_fd_launch_probe = assert_failure(
+        cocoon()
+            .args(["probe-capsule-fd-launch", "hello-service"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon probe-capsule-fd-launch can be executed"),
+    );
+    let capsule_fd_launch_probe_stderr = stderr(capsule_fd_launch_probe);
+    assert!(
+        capsule_fd_launch_probe_stderr
+            .contains("failed to probe capsule FD-only launch for capsule 'hello-service'"),
+        "{capsule_fd_launch_probe_stderr}"
+    );
+    assert!(
+        capsule_fd_launch_probe_stderr
+            .contains("Redox capsule FD-only launch probe unavailable on this platform"),
+        "{capsule_fd_launch_probe_stderr}"
+    );
+
     let unenforced_run = assert_failure(
         cocoon()
             .args(["run", "hello-service"])

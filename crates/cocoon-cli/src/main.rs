@@ -140,6 +140,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Probe Redox FD-only launch of the installed capsule entrypoint
+    ProbeCapsuleFdLaunch {
+        /// Installed capsule name
+        capsule_name: String,
+        /// Cocoon install root
+        #[arg(long, default_value = "/pkg/cocoon")]
+        install_root: PathBuf,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Internal Redox authority probe child process
     #[command(name = "__authority-child", hide = true)]
     AuthorityChild {
@@ -173,6 +184,22 @@ enum Commands {
         denied_file_path: String,
         #[arg(long)]
         hidden_scheme_path: String,
+    },
+    /// Internal Redox capsule FD launch child process
+    #[command(name = "__capsule-fd-launch-child", hide = true)]
+    CapsuleFdLaunchChild {
+        #[arg(long)]
+        executable_fd: usize,
+        #[arg(long)]
+        allowed_preopen_fd: usize,
+        #[arg(long)]
+        denied_file_path: String,
+        #[arg(long)]
+        hidden_scheme_path: String,
+        #[arg(long = "visible-scheme")]
+        visible_schemes: Vec<String>,
+        #[arg(long = "entry-arg", allow_hyphen_values = true)]
+        entry_args: Vec<String>,
     },
     /// Show installed capsule status and latest receipts
     Status {
@@ -426,6 +453,11 @@ fn main() -> Result<()> {
             install_root,
             json,
         } => cmd_probe_fd_launch(capsule_name, install_root, json),
+        Commands::ProbeCapsuleFdLaunch {
+            capsule_name,
+            install_root,
+            json,
+        } => cmd_probe_capsule_fd_launch(capsule_name, install_root, json),
         Commands::AuthorityChild {
             capsule_name,
             install_root,
@@ -447,6 +479,21 @@ fn main() -> Result<()> {
             denied_file_path,
             hidden_scheme_path,
         } => cmd_fd_launch_fixture(allowed_preopen_fd, denied_file_path, hidden_scheme_path),
+        Commands::CapsuleFdLaunchChild {
+            executable_fd,
+            allowed_preopen_fd,
+            denied_file_path,
+            hidden_scheme_path,
+            visible_schemes,
+            entry_args,
+        } => cmd_capsule_fd_launch_child(
+            executable_fd,
+            allowed_preopen_fd,
+            denied_file_path,
+            hidden_scheme_path,
+            visible_schemes,
+            entry_args,
+        ),
         Commands::Status {
             capsule_name,
             require_receipt_signatures,
@@ -862,6 +909,24 @@ fn cmd_probe_fd_launch(capsule_name: String, install_root: PathBuf, json: bool) 
     Ok(())
 }
 
+fn cmd_probe_capsule_fd_launch(
+    capsule_name: String,
+    install_root: PathBuf,
+    json: bool,
+) -> Result<()> {
+    let capsule_name = cocoon_core::CapsuleName::parse(capsule_name)?;
+    let report = cocoon_runtime::probe_capsule_fd_launch(&capsule_name, &install_root)
+        .with_context(|| {
+            format!("failed to probe capsule FD-only launch for capsule '{capsule_name}'")
+        })?;
+    if json {
+        print_json(&serde_json::json!({ "receipt": report.receipt }))?;
+    } else {
+        println!("{}", format_capsule_fd_launch_probe_report(&report));
+    }
+    Ok(())
+}
+
 fn cmd_authority_child(capsule_name: String, install_root: PathBuf) -> Result<()> {
     let capsule_name = cocoon_core::CapsuleName::parse(capsule_name)?;
     cocoon_runtime::run_authority_probe_child(&capsule_name, &install_root)
@@ -900,6 +965,26 @@ fn cmd_fd_launch_fixture(
         &hidden_scheme_path,
     )
     .context("failed to run Redox FD-only launch fixture")?;
+    Ok(())
+}
+
+fn cmd_capsule_fd_launch_child(
+    executable_fd: usize,
+    allowed_preopen_fd: usize,
+    denied_file_path: String,
+    hidden_scheme_path: String,
+    visible_schemes: Vec<String>,
+    entry_args: Vec<String>,
+) -> Result<()> {
+    cocoon_runtime::run_capsule_fd_launch_probe_child(
+        executable_fd,
+        allowed_preopen_fd,
+        &denied_file_path,
+        &hidden_scheme_path,
+        &visible_schemes,
+        &entry_args,
+    )
+    .context("failed to run Redox capsule FD-only launch child")?;
     Ok(())
 }
 
@@ -1257,6 +1342,8 @@ fn status_report_json(status: &cocoon_runtime::ServiceStatusReport) -> serde_jso
         "latest_install_receipt": status.latest_install_receipt,
         "latest_run_receipt": status.latest_run_receipt,
         "latest_authority_probe_receipt": status.latest_authority_probe_receipt,
+        "latest_fd_launch_probe_receipt": status.latest_fd_launch_probe_receipt,
+        "latest_capsule_fd_launch_probe_receipt": status.latest_capsule_fd_launch_probe_receipt,
         "latest_rollback_receipt": status.latest_rollback_receipt,
     })
 }
@@ -1691,6 +1778,32 @@ fn format_status_report(status: &cocoon_runtime::ServiceStatusReport) -> String 
         lines.push("Latest authority probe receipt: <none>".to_string());
     }
 
+    if let Some(receipt) = &status.latest_fd_launch_probe_receipt {
+        lines.push(format!(
+            "Latest FD launch probe receipt: {}",
+            receipt.body_hash
+        ));
+        lines.push(format!(
+            "Latest FD launch probe mode: {}",
+            receipt.body.mode
+        ));
+    } else {
+        lines.push("Latest FD launch probe receipt: <none>".to_string());
+    }
+
+    if let Some(receipt) = &status.latest_capsule_fd_launch_probe_receipt {
+        lines.push(format!(
+            "Latest capsule FD launch probe receipt: {}",
+            receipt.body_hash
+        ));
+        lines.push(format!(
+            "Latest capsule FD launch probe mode: {}",
+            receipt.body.mode
+        ));
+    } else {
+        lines.push("Latest capsule FD launch probe receipt: <none>".to_string());
+    }
+
     if let Some(receipt) = &status.latest_rollback_receipt {
         lines.push(format!("Latest rollback receipt: {}", receipt.body_hash));
         lines.push(format!(
@@ -1842,6 +1955,9 @@ fn format_fd_launch_probe_report(report: &cocoon_runtime::FdLaunchProbeReport) -
     if body.open_executable_before_restriction {
         lines.push("PASS open executable before restriction".to_string());
     }
+    if body.open_declared_preopens_before_restriction {
+        lines.push("PASS open declared preopens before restriction".to_string());
+    }
     if body.entered_restricted_namespace {
         lines.push("PASS enter restricted namespace".to_string());
     }
@@ -1860,6 +1976,55 @@ fn format_fd_launch_probe_report(report: &cocoon_runtime::FdLaunchProbeReport) -
     if !body.failure_message.is_empty() {
         lines.push(format!(
             "BLOCKED redox FD-only service launch: {}",
+            body.failure_message
+        ));
+    }
+    lines.join("\n")
+}
+
+fn format_capsule_fd_launch_probe_report(
+    report: &cocoon_runtime::CapsuleFdLaunchProbeReport,
+) -> String {
+    let body = &report.receipt.body;
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "Capsule FD-only launch probe for {}@{}",
+        body.capsule_name, body.capsule_version
+    ));
+    lines.push(format!("Mode: {}", body.mode));
+    lines.push(format!(
+        "Authority enforced for service: {}",
+        body.authority_enforced_for_service
+    ));
+    lines.push(format!(
+        "Production arbitrary service: {}",
+        body.production_arbitrary_service
+    ));
+    lines.push(format!("Body hash: {}", report.receipt.body_hash));
+    if body.open_executable_before_restriction {
+        lines.push("PASS open installed capsule entrypoint before restriction".to_string());
+    }
+    if body.open_declared_preopens_before_restriction {
+        lines.push("PASS open declared preopens before restriction".to_string());
+    }
+    if body.entered_restricted_namespace {
+        lines.push("PASS enter manifest-derived restricted namespace".to_string());
+    }
+    if body.exec_from_fd_succeeded {
+        lines.push("PASS fexec installed capsule entrypoint".to_string());
+    }
+    if body.allowed_preopen_read {
+        lines.push("PASS service reads declared resource".to_string());
+    }
+    if body.denied_file_rejected {
+        lines.push("PASS denied ambient path rejected".to_string());
+    }
+    if body.hidden_scheme_rejected {
+        lines.push("PASS undeclared tcp scheme rejected".to_string());
+    }
+    if !body.failure_message.is_empty() {
+        lines.push(format!(
+            "BLOCKED redox capsule FD-only launch: {}",
             body.failure_message
         ));
     }
@@ -2084,6 +2249,8 @@ mod tests {
             latest_install_receipt: Some(install_receipt),
             latest_run_receipt: Some(run_receipt),
             latest_authority_probe_receipt: None,
+            latest_fd_launch_probe_receipt: None,
+            latest_capsule_fd_launch_probe_receipt: None,
             latest_rollback_receipt: None,
         };
         let output = format_status_report(&status);
@@ -2098,6 +2265,8 @@ mod tests {
         assert!(output.contains("Latest run stdout hash: blake3:stdout"));
         assert!(output.contains("Latest run stderr hash: blake3:stderr"));
         assert!(output.contains("Latest authority probe receipt: <none>"));
+        assert!(output.contains("Latest FD launch probe receipt: <none>"));
+        assert!(output.contains("Latest capsule FD launch probe receipt: <none>"));
     }
 
     #[test]
@@ -2176,6 +2345,7 @@ mod tests {
                     production_arbitrary_service: false,
                     child_exit_code: Some(0),
                     open_executable_before_restriction: true,
+                    open_declared_preopens_before_restriction: true,
                     entered_restricted_namespace: true,
                     exec_from_fd_attempted: true,
                     exec_from_fd_succeeded: true,
@@ -2209,6 +2379,58 @@ mod tests {
         assert!(output.contains("PASS service reads declared preopen"));
         assert!(output.contains("PASS service cannot open denied path by name"));
         assert!(output.contains("PASS service cannot open hidden/undeclared scheme"));
+    }
+
+    #[test]
+    fn formats_capsule_fd_launch_probe_report_output() {
+        let output =
+            format_capsule_fd_launch_probe_report(&cocoon_runtime::CapsuleFdLaunchProbeReport {
+                receipt: cocoon_runtime::FdLaunchProbeReceipt {
+                    receipt_version: 1,
+                    event: "capsule_fd_launch_probe".to_string(),
+                    body: cocoon_runtime::FdLaunchProbeReceiptBody {
+                        capsule_name: "hello-service".to_string(),
+                        capsule_version: "0.1.0".to_string(),
+                        mode: "redox-enforced-capsule-entrypoint".to_string(),
+                        authority_enforced_for_service: true,
+                        production_arbitrary_service: false,
+                        child_exit_code: Some(0),
+                        open_executable_before_restriction: true,
+                        open_declared_preopens_before_restriction: true,
+                        entered_restricted_namespace: true,
+                        exec_from_fd_attempted: true,
+                        exec_from_fd_succeeded: true,
+                        allowed_preopen_read: true,
+                        allowed_preopen_guest_path: "/app".to_string(),
+                        denied_file_path: "/home/cocoon-authority-probe-denied".to_string(),
+                        denied_file_rejected: true,
+                        hidden_scheme_path: "/scheme/tcp".to_string(),
+                        hidden_scheme_rejected: true,
+                        failure_message: String::new(),
+                        stdout_log: "/pkg/cocoon/logs/capsule-fd-launch/stdout.log".to_string(),
+                        stdout_hash: "blake3:stdout".to_string(),
+                        stderr_log: "/pkg/cocoon/logs/capsule-fd-launch/stderr.log".to_string(),
+                        stderr_hash: "blake3:stderr".to_string(),
+                        started_at: "unix:1".to_string(),
+                        finished_at: "unix:2".to_string(),
+                        runtime_version: "0.1.0".to_string(),
+                    },
+                    body_hash: "blake3:capsule-fd-launch".to_string(),
+                    signature: None,
+                },
+            });
+
+        assert!(output.contains("Capsule FD-only launch probe for hello-service@0.1.0"));
+        assert!(output.contains("Mode: redox-enforced-capsule-entrypoint"));
+        assert!(output.contains("Authority enforced for service: true"));
+        assert!(output.contains("Production arbitrary service: false"));
+        assert!(output.contains("PASS open installed capsule entrypoint before restriction"));
+        assert!(output.contains("PASS open declared preopens before restriction"));
+        assert!(output.contains("PASS enter manifest-derived restricted namespace"));
+        assert!(output.contains("PASS fexec installed capsule entrypoint"));
+        assert!(output.contains("PASS service reads declared resource"));
+        assert!(output.contains("PASS denied ambient path rejected"));
+        assert!(output.contains("PASS undeclared tcp scheme rejected"));
     }
 
     #[test]

@@ -12,7 +12,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-fs2 = "0.4"
 
 [target.'cfg(target_os = "redox")'.dependencies]
 ioslice = "0.6"

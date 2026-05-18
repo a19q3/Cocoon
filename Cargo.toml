@@ -7,7 +7,8 @@ members = [
   "crates/cocoon-runtime",
   "crates/cocoon-testkit",
   "crates/redox-link-probe",
-  "xtask",
+  "examples/hello-service",
+  "xtask"
 ]
 
 # Fuzzing crate is intentionally excluded from the default workspace build because

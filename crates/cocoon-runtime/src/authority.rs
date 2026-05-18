@@ -15,7 +15,7 @@ use cocoon_core::CapsuleName;
 #[cfg(any(target_os = "redox", test))]
 use cocoon_core::hash_bytes;
 #[cfg(target_os = "redox")]
-use cocoon_core::{CapsuleManifest, PermissionEffect, PreopenRight};
+use cocoon_core::{CapsuleManifest, GuestPath, PermissionEffect, PreopenRight, SchemeVisibility};
 
 #[cfg(target_os = "redox")]
 use crate::install::acquire_capsule_lock;
@@ -105,6 +105,7 @@ pub struct FdLaunchProbeReceiptBody {
     pub production_arbitrary_service: bool,
     pub child_exit_code: Option<i32>,
     pub open_executable_before_restriction: bool,
+    pub open_declared_preopens_before_restriction: bool,
     pub entered_restricted_namespace: bool,
     pub exec_from_fd_attempted: bool,
     pub exec_from_fd_succeeded: bool,
@@ -126,6 +127,11 @@ pub struct FdLaunchProbeReceiptBody {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FdLaunchProbeReport {
+    pub receipt: FdLaunchProbeReceipt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapsuleFdLaunchProbeReport {
     pub receipt: FdLaunchProbeReceipt,
 }
 
@@ -180,6 +186,13 @@ pub fn probe_fd_launch(
     probe_fd_launch_impl(capsule_name, install_root)
 }
 
+pub fn probe_capsule_fd_launch(
+    capsule_name: &CapsuleName,
+    install_root: &Path,
+) -> Result<CapsuleFdLaunchProbeReport> {
+    probe_capsule_fd_launch_impl(capsule_name, install_root)
+}
+
 pub fn run_fd_launch_probe_child(
     executable_fd: usize,
     allowed_preopen_fd: usize,
@@ -191,6 +204,24 @@ pub fn run_fd_launch_probe_child(
         allowed_preopen_fd,
         denied_file_path,
         hidden_scheme_path,
+    )
+}
+
+pub fn run_capsule_fd_launch_probe_child(
+    executable_fd: usize,
+    allowed_preopen_fd: usize,
+    denied_file_path: &str,
+    hidden_scheme_path: &str,
+    visible_schemes: &[String],
+    entry_args: &[String],
+) -> Result<FdLaunchProbeChildReport> {
+    run_capsule_fd_launch_probe_child_impl(
+        executable_fd,
+        allowed_preopen_fd,
+        denied_file_path,
+        hidden_scheme_path,
+        visible_schemes,
+        entry_args,
     )
 }
 
@@ -244,6 +275,16 @@ fn probe_fd_launch_impl(
 }
 
 #[cfg(not(target_os = "redox"))]
+fn probe_capsule_fd_launch_impl(
+    _capsule_name: &CapsuleName,
+    _install_root: &Path,
+) -> Result<CapsuleFdLaunchProbeReport> {
+    Err(RuntimeError::AuthorityProbe(
+        "Redox capsule FD-only launch probe unavailable on this platform".to_string(),
+    ))
+}
+
+#[cfg(not(target_os = "redox"))]
 fn run_fd_launch_probe_child_impl(
     _executable_fd: usize,
     _allowed_preopen_fd: usize,
@@ -252,6 +293,20 @@ fn run_fd_launch_probe_child_impl(
 ) -> Result<FdLaunchProbeChildReport> {
     Err(RuntimeError::AuthorityProbe(
         "Redox FD-only launch child unavailable on this platform".to_string(),
+    ))
+}
+
+#[cfg(not(target_os = "redox"))]
+fn run_capsule_fd_launch_probe_child_impl(
+    _executable_fd: usize,
+    _allowed_preopen_fd: usize,
+    _denied_file_path: &str,
+    _hidden_scheme_path: &str,
+    _visible_schemes: &[String],
+    _entry_args: &[String],
+) -> Result<FdLaunchProbeChildReport> {
+    Err(RuntimeError::AuthorityProbe(
+        "Redox capsule FD-only launch child unavailable on this platform".to_string(),
     ))
 }
 
@@ -396,6 +451,7 @@ fn probe_fd_launch_impl(
     let stdout_text = String::from_utf8_lossy(&output.stdout);
     let open_executable_before_restriction =
         stdout_text.contains("PASS open executable before restriction");
+    let open_declared_preopens_before_restriction = true;
     let entered_restricted_namespace = stdout_text.contains("PASS enter restricted namespace");
     let exec_from_fd_attempted = stdout_text
         .contains("PASS attempt exec service from inherited executable FD")
@@ -447,6 +503,7 @@ fn probe_fd_launch_impl(
         production_arbitrary_service: false,
         child_exit_code: output.status.code(),
         open_executable_before_restriction,
+        open_declared_preopens_before_restriction,
         entered_restricted_namespace,
         exec_from_fd_attempted,
         exec_from_fd_succeeded,
@@ -478,6 +535,149 @@ fn probe_fd_launch_impl(
 }
 
 #[cfg(target_os = "redox")]
+fn probe_capsule_fd_launch_impl(
+    capsule_name: &CapsuleName,
+    install_root: &Path,
+) -> Result<CapsuleFdLaunchProbeReport> {
+    let capsule_root = install_root.join("capsules").join(capsule_name.as_str());
+    let current_root = capsule_root.join("current");
+
+    let lock = acquire_capsule_lock(install_root, capsule_name.as_str())?;
+    verify_installed_capsule_unlocked(capsule_name, install_root)?;
+    let manifest = read_installed_manifest(&current_root)?;
+    let preopen = readable_file_preopen(&manifest)?;
+    let entrypoint = map_installed_guest_path(
+        &current_root,
+        &manifest.filesystem.root,
+        &manifest.entry.cmd,
+        "entry.cmd",
+    )?;
+    let allowed_probe_file = current_root.join(cocoon_bundle::MANIFEST_NAME);
+    let allowed_preopen_guest_path = preopen.guest_path.to_string();
+    let denied_file_path = denied_file_probe_path(&manifest);
+    let hidden_scheme_path = hidden_scheme_probe_path();
+    let visible_schemes = manifest_fd_launch_schemes(&manifest);
+    let entry_args = manifest.entry.args.clone();
+    drop(lock);
+
+    let executable_fd = open_redox_fd(
+        &entrypoint.display().to_string(),
+        "installed capsule entrypoint",
+    )?;
+    let allowed_preopen_fd = open_redox_fd(
+        &allowed_probe_file.display().to_string(),
+        "declared preopen probe file",
+    )?;
+
+    let run_id = format!("{}-{}", unix_seconds()?, std::process::id());
+    let logs_root = capsule_root.join("logs").join("capsule-fd-launch");
+    fs::create_dir_all(&logs_root)?;
+    let stdout_log = logs_root.join(format!("{run_id}.stdout.log"));
+    let stderr_log = logs_root.join(format!("{run_id}.stderr.log"));
+
+    let started_at = format!("unix:{}", unix_seconds()?);
+    let output = run_capsule_fd_launch_child(
+        executable_fd.raw(),
+        allowed_preopen_fd.raw(),
+        &denied_file_path,
+        &hidden_scheme_path,
+        &visible_schemes,
+        &entry_args,
+    )?;
+    let finished_at = format!("unix:{}", unix_seconds()?);
+    fs::write(&stdout_log, &output.stdout)?;
+    fs::write(&stderr_log, &output.stderr)?;
+
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    let open_executable_before_restriction =
+        stdout_text.contains("PASS open installed capsule entrypoint before restriction");
+    let opened_preopens_before_restriction =
+        stdout_text.contains("PASS open declared preopens before restriction");
+    let entered_restricted_namespace =
+        stdout_text.contains("PASS enter manifest-derived restricted namespace");
+    let exec_from_fd_attempted = stdout_text
+        .contains("PASS attempt fexec installed capsule entrypoint")
+        || stdout_text.contains("BLOCKED redox capsule FD-only launch");
+    let exec_from_fd_succeeded = stdout_text.contains("PASS fexec installed capsule entrypoint");
+    let allowed_preopen_read = stdout_text.contains("PASS service reads declared resource");
+    let denied_file_rejected = stdout_text.contains("PASS denied ambient path rejected");
+    let hidden_scheme_rejected = stdout_text.contains("PASS undeclared tcp scheme rejected");
+    let blocked = stdout_text.contains("BLOCKED redox capsule FD-only launch");
+    let service_enforced = output.status.success()
+        && open_executable_before_restriction
+        && opened_preopens_before_restriction
+        && entered_restricted_namespace
+        && exec_from_fd_succeeded
+        && allowed_preopen_read
+        && denied_file_rejected
+        && hidden_scheme_rejected;
+    let classified_blocked = output.status.success()
+        && open_executable_before_restriction
+        && opened_preopens_before_restriction
+        && entered_restricted_namespace
+        && exec_from_fd_attempted
+        && blocked;
+    if !service_enforced && !classified_blocked {
+        return Err(RuntimeError::AuthorityProbe(format!(
+            "capsule fd-launch probe failed: exit={:?}, stdout={}, stderr={}",
+            output.status.code(),
+            stdout_text.trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    let mode = if service_enforced {
+        "redox-enforced-capsule-entrypoint"
+    } else {
+        "redox-capsule-fd-launch-blocked"
+    }
+    .to_string();
+    let failure_message = if service_enforced {
+        String::new()
+    } else {
+        extract_capsule_blocked_line(&stdout_text)
+            .unwrap_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
+    };
+    let body = FdLaunchProbeReceiptBody {
+        capsule_name: manifest.capsule.name.to_string(),
+        capsule_version: manifest.capsule.version.to_string(),
+        mode,
+        authority_enforced_for_service: service_enforced,
+        production_arbitrary_service: false,
+        child_exit_code: output.status.code(),
+        open_executable_before_restriction,
+        open_declared_preopens_before_restriction: opened_preopens_before_restriction,
+        entered_restricted_namespace,
+        exec_from_fd_attempted,
+        exec_from_fd_succeeded,
+        allowed_preopen_read,
+        allowed_preopen_guest_path,
+        denied_file_path,
+        denied_file_rejected,
+        hidden_scheme_path,
+        hidden_scheme_rejected,
+        failure_message,
+        stdout_log: stdout_log.display().to_string(),
+        stdout_hash: hash_bytes(&output.stdout),
+        stderr_log: stderr_log.display().to_string(),
+        stderr_hash: hash_bytes(&output.stderr),
+        started_at,
+        finished_at,
+        runtime_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let body_hash = hash_bytes(&canonical_fd_launch_probe_receipt_body_bytes(&body)?);
+    let receipt = FdLaunchProbeReceipt {
+        receipt_version: 1,
+        event: "capsule_fd_launch_probe".to_string(),
+        body,
+        body_hash,
+        signature: None,
+    };
+    write_capsule_fd_launch_probe_receipt(&capsule_root, &run_id, &receipt)?;
+    Ok(CapsuleFdLaunchProbeReport { receipt })
+}
+
+#[cfg(target_os = "redox")]
 fn open_redox_fd(path: &str, label: &str) -> Result<libredox::Fd> {
     libredox::Fd::open(path, libredox::flag::O_RDONLY, 0).map_err(|error| {
         RuntimeError::AuthorityProbe(format!("failed to open {label} '{path}': {error}"))
@@ -506,10 +706,48 @@ fn run_fd_launch_child(
 }
 
 #[cfg(target_os = "redox")]
+fn run_capsule_fd_launch_child(
+    executable_fd: usize,
+    allowed_preopen_fd: usize,
+    denied_file_path: &str,
+    hidden_scheme_path: &str,
+    visible_schemes: &[String],
+    entry_args: &[String],
+) -> Result<Output> {
+    let current_exe = current_executable_arg()?;
+    let mut command = Command::new(current_exe);
+    command
+        .arg("__capsule-fd-launch-child")
+        .arg("--executable-fd")
+        .arg(executable_fd.to_string())
+        .arg("--allowed-preopen-fd")
+        .arg(allowed_preopen_fd.to_string())
+        .arg("--denied-file-path")
+        .arg(denied_file_path)
+        .arg("--hidden-scheme-path")
+        .arg(hidden_scheme_path);
+    for scheme in visible_schemes {
+        command.arg("--visible-scheme").arg(scheme);
+    }
+    for arg in entry_args {
+        command.arg("--entry-arg").arg(arg);
+    }
+    Ok(command.output()?)
+}
+
+#[cfg(target_os = "redox")]
 fn extract_blocked_line(stdout_text: &str) -> Option<String> {
     stdout_text
         .lines()
         .find(|line| line.starts_with("BLOCKED redox FD-only service launch"))
+        .map(ToOwned::to_owned)
+}
+
+#[cfg(target_os = "redox")]
+fn extract_capsule_blocked_line(stdout_text: &str) -> Option<String> {
+    stdout_text
+        .lines()
+        .find(|line| line.starts_with("BLOCKED redox capsule FD-only launch"))
         .map(ToOwned::to_owned)
 }
 
@@ -618,6 +856,61 @@ fn run_fd_launch_probe_child_impl(
 }
 
 #[cfg(target_os = "redox")]
+fn run_capsule_fd_launch_probe_child_impl(
+    executable_fd: usize,
+    allowed_preopen_fd: usize,
+    denied_file_path: &str,
+    hidden_scheme_path: &str,
+    visible_schemes: &[String],
+    entry_args: &[String],
+) -> Result<FdLaunchProbeChildReport> {
+    enter_fd_launch_namespace_with_schemes(visible_schemes)?;
+    println!("PASS open installed capsule entrypoint before restriction");
+    println!("PASS open declared preopens before restriction");
+    println!("PASS enter manifest-derived restricted namespace");
+
+    let denied_file_rejected = fs::File::open(denied_file_path).is_err();
+    if !denied_file_rejected {
+        return Err(RuntimeError::AuthorityProbe(format!(
+            "denied file path opened successfully after namespace restriction: {denied_file_path}"
+        )));
+    }
+
+    let hidden_scheme_rejected = fs::File::open(hidden_scheme_path).is_err();
+    if !hidden_scheme_rejected {
+        return Err(RuntimeError::AuthorityProbe(format!(
+            "hidden scheme opened successfully after namespace restriction: {hidden_scheme_path}"
+        )));
+    }
+
+    println!("PASS attempt fexec installed capsule entrypoint");
+    match fexec_capsule_entrypoint(
+        executable_fd,
+        allowed_preopen_fd,
+        denied_file_path,
+        hidden_scheme_path,
+        entry_args,
+    ) {
+        Ok(never) => match never {},
+        Err(error) => {
+            let failure_message = format!("{error}");
+            println!(
+                "BLOCKED redox capsule FD-only launch stable API not proven: {failure_message}"
+            );
+            Ok(FdLaunchProbeChildReport {
+                entered_restricted_namespace: true,
+                exec_from_fd_attempted: true,
+                exec_from_fd_succeeded: false,
+                allowed_preopen_read: false,
+                denied_file_rejected,
+                hidden_scheme_rejected,
+                failure_message,
+            })
+        }
+    }
+}
+
+#[cfg(target_os = "redox")]
 fn enter_fd_launch_namespace() -> Result<()> {
     let names = [
         ioslice::IoSlice::new(b"memory"),
@@ -632,6 +925,29 @@ fn enter_fd_launch_namespace() -> Result<()> {
     libredox::call::setrens(namespace, namespace).map_err(|error| {
         RuntimeError::AuthorityProbe(format!(
             "failed to enter Redox fd-launch namespace: {error}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(target_os = "redox")]
+fn enter_fd_launch_namespace_with_schemes(visible_schemes: &[String]) -> Result<()> {
+    let scheme_bytes = visible_schemes
+        .iter()
+        .map(|scheme| scheme.as_bytes())
+        .collect::<Vec<_>>();
+    let names = scheme_bytes
+        .iter()
+        .map(|scheme| ioslice::IoSlice::new(scheme))
+        .collect::<Vec<_>>();
+    let namespace = libredox::call::mkns(&names).map_err(|error| {
+        RuntimeError::AuthorityProbe(format!(
+            "failed to create Redox capsule fd-launch namespace: {error}"
+        ))
+    })?;
+    libredox::call::setrens(namespace, namespace).map_err(|error| {
+        RuntimeError::AuthorityProbe(format!(
+            "failed to enter Redox capsule fd-launch namespace: {error}"
         ))
     })?;
     Ok(())
@@ -695,6 +1011,60 @@ fn fexec_fd_launch_fixture(
     // SAFETY: `fd` is an already-open executable FD inherited by this Redox
     // process, argv/envp are null-terminated arrays of stable CString pointers,
     // and successful fexecve does not return.
+    let rc = unsafe { fexecve(fd, argv_ptrs.as_ptr(), envp.as_ptr()) };
+    Err(RuntimeError::AuthorityProbe(format!(
+        "fexecve returned {rc}: {}",
+        std::io::Error::last_os_error()
+    )))
+}
+
+#[cfg(target_os = "redox")]
+fn fexec_capsule_entrypoint(
+    executable_fd: usize,
+    allowed_preopen_fd: usize,
+    denied_file_path: &str,
+    hidden_scheme_path: &str,
+    entry_args: &[String],
+) -> Result<Never> {
+    unsafe extern "C" {
+        fn fexecve(
+            fd: libc::c_int,
+            argv: *const *const libc::c_char,
+            envp: *const *const libc::c_char,
+        ) -> libc::c_int;
+    }
+
+    let mut args = vec!["capsule-entrypoint".to_string()];
+    args.extend(entry_args.iter().cloned());
+    args.push("--allowed-preopen-fd".to_string());
+    args.push(allowed_preopen_fd.to_string());
+    args.push("--denied-file-path".to_string());
+    args.push(denied_file_path.to_string());
+    args.push("--hidden-scheme-path".to_string());
+    args.push(hidden_scheme_path.to_string());
+
+    let argv = args
+        .iter()
+        .map(|arg| {
+            CString::new(arg.as_str()).map_err(|error| {
+                RuntimeError::AuthorityProbe(format!("invalid capsule entrypoint arg: {error}"))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut argv_ptrs = argv
+        .iter()
+        .map(|arg| arg.as_ptr())
+        .collect::<Vec<*const libc::c_char>>();
+    argv_ptrs.push(std::ptr::null());
+    let envp = [std::ptr::null::<libc::c_char>()];
+    let fd = libc::c_int::try_from(executable_fd).map_err(|_| {
+        RuntimeError::AuthorityProbe(format!(
+            "installed capsule entrypoint fd does not fit C int for fexecve: {executable_fd}"
+        ))
+    })?;
+    // SAFETY: `fd` is an already-open installed capsule entrypoint FD inherited
+    // by this Redox process, argv/envp are null-terminated arrays of stable
+    // CString pointers, and successful fexecve does not return.
     let rc = unsafe { fexecve(fd, argv_ptrs.as_ptr(), envp.as_ptr()) };
     Err(RuntimeError::AuthorityProbe(format!(
         "fexecve returned {rc}: {}",
@@ -868,12 +1238,84 @@ fn hidden_scheme_probe_path() -> String {
 }
 
 #[cfg(target_os = "redox")]
+fn manifest_fd_launch_schemes(manifest: &CapsuleManifest) -> Vec<String> {
+    let mut schemes = vec!["memory".to_string(), "pipe".to_string()];
+    for permission in &manifest.permissions {
+        if permission.is_allow() {
+            maybe_push_redox_runtime_scheme(&mut schemes, permission.scheme.as_str());
+        }
+    }
+    for scheme in &manifest.schemes {
+        if scheme.visibility != SchemeVisibility::Hidden {
+            maybe_push_redox_runtime_scheme(&mut schemes, scheme.name.as_str());
+        }
+    }
+    schemes
+}
+
+#[cfg(target_os = "redox")]
+fn maybe_push_redox_runtime_scheme(schemes: &mut Vec<String>, scheme: &str) {
+    if matches!(scheme, "rand" | "time" | "event" | "null") && !schemes.iter().any(|s| s == scheme)
+    {
+        schemes.push(scheme.to_string());
+    }
+}
+
+#[cfg(target_os = "redox")]
+fn map_installed_guest_path(
+    current_root: &Path,
+    filesystem_root: &GuestPath,
+    guest_path: &GuestPath,
+    label: &str,
+) -> Result<std::path::PathBuf> {
+    if !filesystem_root.contains(guest_path) {
+        return Err(RuntimeError::GuestPath(format!(
+            "{label} '{guest_path}' is outside filesystem.root '{filesystem_root}'"
+        )));
+    }
+
+    let suffix = if filesystem_root.as_str() == "/" {
+        guest_path.as_str().trim_start_matches('/')
+    } else {
+        guest_path
+            .as_str()
+            .strip_prefix(filesystem_root.as_str())
+            .ok_or_else(|| {
+                RuntimeError::GuestPath(format!(
+                    "{label} '{guest_path}' could not be mapped below filesystem.root '{filesystem_root}'"
+                ))
+            })?
+            .trim_start_matches('/')
+    };
+
+    Ok(current_root.join(suffix))
+}
+
+#[cfg(target_os = "redox")]
 fn write_authority_probe_receipt(
     capsule_root: &Path,
     run_id: &str,
     receipt: &AuthorityProbeReceipt,
 ) -> Result<()> {
     let receipts_root = capsule_root.join("receipts").join("authority");
+    fs::create_dir_all(&receipts_root)?;
+    let bytes = serde_json::to_vec_pretty(receipt)?;
+    fs::write(receipts_root.join(format!("{run_id}.json")), &bytes)?;
+
+    let latest = receipts_root.join("latest.json");
+    let latest_tmp = receipts_root.join("latest.json.tmp");
+    fs::write(&latest_tmp, bytes)?;
+    fs::rename(latest_tmp, latest)?;
+    Ok(())
+}
+
+#[cfg(target_os = "redox")]
+fn write_capsule_fd_launch_probe_receipt(
+    capsule_root: &Path,
+    run_id: &str,
+    receipt: &FdLaunchProbeReceipt,
+) -> Result<()> {
+    let receipts_root = capsule_root.join("receipts").join("capsule-fd-launch");
     fs::create_dir_all(&receipts_root)?;
     let bytes = serde_json::to_vec_pretty(receipt)?;
     fs::write(receipts_root.join(format!("{run_id}.json")), &bytes)?;
@@ -980,6 +1422,23 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "redox"))]
+    #[test]
+    fn capsule_fd_launch_probe_is_unavailable_off_redox() {
+        let error = probe_capsule_fd_launch(
+            &CapsuleName::parse("hello-service").unwrap(),
+            Path::new("/tmp"),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, RuntimeError::AuthorityProbe(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("Redox capsule FD-only launch probe unavailable on this platform")
+        );
+    }
+
     #[test]
     fn authority_probe_receipt_body_hash_is_stable() {
         let body = AuthorityProbeReceiptBody {
@@ -1019,6 +1478,7 @@ mod tests {
             production_arbitrary_service: false,
             child_exit_code: Some(0),
             open_executable_before_restriction: true,
+            open_declared_preopens_before_restriction: true,
             entered_restricted_namespace: true,
             exec_from_fd_attempted: true,
             exec_from_fd_succeeded: true,

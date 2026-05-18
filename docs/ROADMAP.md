@@ -129,6 +129,11 @@ Goal: prove Redox authority enforcement after the lifecycle is running.
   launched from an inherited executable FD under the restricted namespace. This
   may pass as `redox-controlled-service-enforced` or report
   `redox-fd-launch-blocked` with upstream evidence.
+- Add `cocoon probe-capsule-fd-launch` as P1.2e evidence that an installed
+  capsule entrypoint payload can be opened before restriction and fexeced under
+  a manifest-derived restricted namespace, recording
+  `redox-enforced-capsule-entrypoint` without promoting final production
+  `redox-enforced` yet.
 - Construct the service namespace.
 - Pass preopened handles.
 - Assert denied scheme/path access fails.

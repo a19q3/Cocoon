@@ -7,7 +7,9 @@ Date: 2026-05-17
 A pure Redox null namespace is suitable for proving denial, but it is too strict
 for ordinary Rust service execution. P1.2d showed that a controlled Rust process
 launched through `fexecve` can fail during startup if runtime-required schemes
-are hidden.
+are hidden. P1.2e reused the same conclusion for an installed capsule
+entrypoint and constructed its namespace from runtime minimums plus manifest
+declared Redox runtime schemes.
 
 The concrete failure was:
 
@@ -43,7 +45,7 @@ This matches Cocoon's security model better than a toy null-namespace demo.
 Cocoon's goal is not "no namespace contents"; it is "only manifest-authorized
 schemes and capability handles."
 
-## P1.2d Evidence
+## P1.2d/P1.2e Evidence
 
 The controlled FD launch probe opens the executable and preopen evidence before
 restriction, enters a restricted namespace, launches the fixture with `fexecve`,
@@ -54,6 +56,17 @@ PASS exec service from inherited executable FD
 PASS service reads declared preopen
 PASS service cannot open denied path by name
 PASS service cannot open hidden/undeclared scheme
+```
+
+The installed-entrypoint probe then opens the materialized capsule entrypoint
+before restriction, enters a manifest-derived restricted namespace, launches the
+entrypoint FD with `fexecve`, and proves:
+
+```text
+PASS fexec installed capsule entrypoint
+PASS service reads declared resource
+PASS denied ambient path rejected
+PASS undeclared tcp scheme rejected
 ```
 
 ## Open Questions For Redox/Ibuki
@@ -74,4 +87,3 @@ PASS service cannot open hidden/undeclared scheme
 This note does not justify generic sandbox ownership in Cocoon. Redox owns the
 namespace and capability mechanisms. Cocoon should consume those mechanisms and
 record service authority evidence.
-

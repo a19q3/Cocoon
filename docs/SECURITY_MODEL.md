@@ -203,6 +203,16 @@ denied path/scheme rejection. This is still not production arbitrary-service
 execution, so `cocoon run` remains fail-closed until installed capsule services
 use the same FD-only launch boundary.
 
+`cocoon probe-capsule-fd-launch` is P1.2e installed-entrypoint evidence. On
+Redox it resolves `entry.cmd` from the installed manifest, opens the materialized
+payload entrypoint and declared preopen evidence before restriction, enters a
+manifest-derived restricted namespace, and fexecs the installed entrypoint FD.
+A successful probe records `redox-enforced-capsule-entrypoint`: the installed
+capsule payload started under the restricted boundary and proved declared
+resource access plus denied ambient path and undeclared `tcp` rejection. This is
+still a probe mode; the final `redox-enforced` production label is reserved for
+`cocoon run` after multiple service profiles use the same boundary.
+
 Install, recover, audit, status, logs, run, rollback, and check-install acquire
 a per-capsule lock under the install root before reading or mutating the active
 capsule tree. If another operation already holds the lock, the CLI fails closed

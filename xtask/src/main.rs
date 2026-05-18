@@ -189,6 +189,83 @@ fn prepare_hello_service_v2_source() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn prepare_hello_service_fd_source() -> anyhow::Result<()> {
+    let source_binary = std::path::Path::new("target/x86_64-unknown-redox/debug/hello-service");
+    let target = std::path::Path::new("target/redox-smoke/hello-service-fd-src");
+    remove_dir_if_exists(target)?;
+    std::fs::create_dir_all(target.join("bin"))?;
+    std::fs::copy(source_binary, target.join("bin/hello-service"))?;
+    make_executable(&target.join("bin/hello-service"))?;
+    std::fs::write(
+        target.join("Cocoon.toml"),
+        r#"[capsule]
+name = "hello-service-fd"
+version = "0.1.0"
+description = "Redox FD-only capsule entrypoint fixture"
+authors = ["Arthur Tsang"]
+license = "MIT"
+
+[entry]
+cmd = "/app/bin/hello-service"
+args = ["--authority-self-test"]
+cwd = "/app"
+
+[filesystem]
+root = "/app"
+readonly = [
+  "/app"
+]
+
+[[permission]]
+scheme = "file"
+action = "read"
+target = "/app/**"
+
+[[permission]]
+scheme = "rand"
+action = "read"
+target = "readonly"
+
+[[permission]]
+effect = "deny"
+scheme = "file"
+action = "readwrite"
+target = "/home/**"
+
+[[permission]]
+effect = "deny"
+scheme = "tcp"
+action = "connect"
+target = "*"
+
+[[preopen]]
+scheme = "file"
+host_path = "/pkg/cocoon/capsules/hello-service-fd/current"
+guest_path = "/app"
+rights = ["read", "execute"]
+
+[network]
+default = "deny"
+
+[resources]
+memory_mb = 64
+max_processes = 4
+max_open_fds = 64
+
+[update]
+signed = true
+rollback = true
+permission_expansion_requires_confirmation = true
+
+[audit]
+events = true
+stdout = true
+stderr = true
+"#,
+    )?;
+    Ok(())
+}
+
 fn redox_target_smoke() -> anyhow::Result<()> {
     print_section("Redox target smoke");
     let mut any_todo = false;
@@ -437,6 +514,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     print_section("QEMU smoke");
 
     let capsule = "target/redox-smoke/hello-service.cocoon";
+    let capsule_fd = "target/redox-smoke/hello-service-fd.cocoon";
     let capsule_v2 = "target/redox-smoke/hello-service-v2.cocoon";
     let install_root = "target/redox-smoke/qemu-install";
 
@@ -453,7 +531,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP probe Redox authority inside redox");
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
+        println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
+        println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
         println!("SKIP reject duplicate install inside redox");
         println!("SKIP reject logs before run inside redox");
@@ -483,7 +563,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP probe Redox authority inside redox");
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
+        println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
+        println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
         println!("SKIP reject duplicate install inside redox");
         println!("SKIP reject logs before run inside redox");
@@ -515,7 +597,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP probe Redox authority inside redox");
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
+        println!("SKIP probe Redox FD-only installed capsule entrypoint inside redox");
         println!("SKIP audit Redox authority probe receipt inside redox");
+        println!("SKIP audit Redox FD-only launch probe receipts inside redox");
         println!("SKIP recover temporary install state inside redox");
         println!("SKIP reject duplicate install inside redox");
         println!("SKIP reject logs before run inside redox");
@@ -531,6 +615,22 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP collect receipts/logs");
         return Ok(());
     }
+
+    run("redoxer", &["build", "-p", "hello-service"])?;
+    prepare_hello_service_fd_source()?;
+    run(
+        "cargo",
+        &[
+            "run",
+            "-p",
+            "cocoon-cli",
+            "--",
+            "build",
+            "target/redox-smoke/hello-service-fd-src",
+            "--output",
+            capsule_fd,
+        ],
+    )?;
 
     let verify = run_optional_capture(
         "redoxer",
@@ -568,6 +668,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
          {cocoon_binary} probe-authority hello-service --install-root {install_root} && \
          {cocoon_binary} probe-fd-exec hello-service --install-root {install_root} && \
          {cocoon_binary} probe-fd-launch hello-service --install-root {install_root} && \
+         {cocoon_binary} install {capsule_fd} --install-root {install_root} && \
+         {cocoon_binary} probe-capsule-fd-launch hello-service-fd --install-root {install_root} && \
+         {cocoon_binary} audit hello-service-fd --install-root {install_root} && \
          {cocoon_binary} audit hello-service --install-root {install_root} && \
          mkdir -p {install_root}/.staging/hello-service-0.1.0-abandoned && \
          mkdir -p {install_root}/capsules/hello-service/current.tmp && \
@@ -823,16 +926,57 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("TODO probe Redox FD-only controlled service launch inside redox");
     }
 
+    let capsule_fd_launch_enforced = install_run
+        .contains("Capsule FD-only launch probe for hello-service-fd@0.1.0")
+        && install_run.contains("Mode: redox-enforced-capsule-entrypoint")
+        && install_run.contains("Authority enforced for service: true")
+        && install_run.contains("Production arbitrary service: false")
+        && install_run.contains("PASS open installed capsule entrypoint before restriction")
+        && install_run.contains("PASS open declared preopens before restriction")
+        && install_run.contains("PASS enter manifest-derived restricted namespace")
+        && install_run.contains("PASS fexec installed capsule entrypoint")
+        && install_run.contains("PASS service reads declared resource")
+        && install_run.contains("PASS denied ambient path rejected")
+        && install_run.contains("PASS undeclared tcp scheme rejected");
+    let capsule_fd_launch_blocked = install_run
+        .contains("Capsule FD-only launch probe for hello-service-fd@0.1.0")
+        && install_run.contains("Mode: redox-capsule-fd-launch-blocked")
+        && install_run.contains("BLOCKED redox capsule FD-only launch");
+    if capsule_fd_launch_enforced {
+        println!("PASS probe Redox FD-only installed capsule entrypoint inside redox");
+    } else if capsule_fd_launch_blocked {
+        println!("BLOCKED probe Redox FD-only installed capsule entrypoint inside redox");
+    } else {
+        println!("TODO probe Redox FD-only installed capsule entrypoint inside redox");
+    }
+
     if install_run.contains("latest authority probe receipt body hash")
         && install_run.contains("latest authority probe receipt archive link")
         && install_run.contains("latest authority probe stdout log hash")
         && install_run.contains("latest authority probe stderr log hash")
         && install_run.contains("latest authority probe mode: redox-child-null-namespace")
+        && install_run.contains("latest fd launch probe receipt body hash")
+        && install_run.contains("latest fd launch probe receipt archive link")
+        && install_run.contains("latest fd launch probe stdout log hash")
+        && install_run.contains("latest fd launch probe stderr log hash")
+        && install_run.contains("latest fd launch probe mode: redox-controlled-service-enforced")
     {
         println!("PASS audit Redox authority probe receipt inside redox");
         println!("PASS redox authority probe receipt audited");
     } else {
         println!("TODO audit Redox authority probe receipt inside redox");
+    }
+
+    if install_run.contains("latest capsule fd launch probe receipt body hash")
+        && install_run.contains("latest capsule fd launch probe receipt archive link")
+        && install_run.contains("latest capsule fd launch probe stdout log hash")
+        && install_run.contains("latest capsule fd launch probe stderr log hash")
+        && install_run
+            .contains("latest capsule fd launch probe mode: redox-enforced-capsule-entrypoint")
+    {
+        println!("PASS audit Redox FD-only launch probe receipts inside redox");
+    } else {
+        println!("TODO audit Redox FD-only launch probe receipts inside redox");
     }
 
     if install_run.contains("Recovered hello-service")
@@ -1043,6 +1187,22 @@ fn copy_dir_recursive(
         } else {
             std::fs::copy(&source_path, &target_path)?;
         }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn make_executable(path: &std::path::Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn make_executable(path: &std::path::Path) -> anyhow::Result<()> {
+    if !path.exists() {
+        anyhow::bail!("cannot mark missing file executable: {}", path.display());
     }
     Ok(())
 }

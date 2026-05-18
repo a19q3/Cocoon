@@ -67,7 +67,10 @@ SKIP install capsule inside redox
 SKIP report installed service status inside redox
 SKIP probe Redox authority inside redox
 SKIP classify Redox FD-only service launch gap inside redox
+SKIP probe Redox FD-only controlled service launch inside redox
+SKIP probe Redox FD-only installed capsule entrypoint inside redox
 SKIP audit Redox authority probe receipt inside redox
+SKIP audit Redox FD-only launch probe receipts inside redox
 SKIP recover temporary install state inside redox
 SKIP reject duplicate install inside redox
 SKIP reject logs before run inside redox
@@ -280,8 +283,10 @@ PASS report installed service status inside redox
 PASS probe Redox authority inside redox
 PASS classify Redox FD-only service launch gap inside redox
 PASS/BLOCKED probe Redox FD-only controlled service launch inside redox
+PASS/BLOCKED probe Redox FD-only installed capsule entrypoint inside redox
 PASS audit Redox authority probe receipt inside redox
 PASS redox authority probe receipt audited
+PASS audit Redox FD-only launch probe receipts inside redox
 PASS recover temporary install state inside redox
 PASS reject duplicate install inside redox
 PASS reject logs before run inside redox
@@ -349,6 +354,12 @@ The real Redox/QEMU smoke test should eventually prove:
 - `probe-fd-launch` attempts a controlled fixture launch from an inherited
   executable FD under the restricted namespace and records either controlled
   enforcement evidence or a `redox-fd-launch-blocked` upstream API gap;
+- `probe-capsule-fd-launch` opens the installed capsule entrypoint before
+  restriction, fexecs it under a manifest-derived restricted namespace, and
+  records `redox-enforced-capsule-entrypoint` evidence while keeping
+  production `cocoon run` fail-closed;
+- `audit` verifies authority, controlled FD launch, and installed entrypoint FD
+  launch probe receipt bodies, archive links, and captured stdout/stderr hashes;
 - constructed Redox namespace;
 - preopened handles passed to the service;
 - stdout/stderr log capture;

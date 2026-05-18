@@ -6,3 +6,6 @@ edition = "2024"
 [[bin]]
 name = "hello-service"
 path = "src/main.rs"
+
+[target.'cfg(target_os = "redox")'.dependencies]
+libredox = "0.1.10"

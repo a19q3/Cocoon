@@ -9,7 +9,8 @@ use crate::receipt::{
 };
 use crate::run::verify_installed_capsule_unlocked;
 use crate::{
-    AuthorityProbeReceipt, InstallReceipt, Result, RollbackReceipt, RunReceipt, RuntimeError,
+    AuthorityProbeReceipt, FdLaunchProbeReceipt, InstallReceipt, Result, RollbackReceipt,
+    RunReceipt, RuntimeError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,8 @@ pub struct ServiceStatusReport {
     pub latest_install_receipt: Option<InstallReceipt>,
     pub latest_run_receipt: Option<RunReceipt>,
     pub latest_authority_probe_receipt: Option<AuthorityProbeReceipt>,
+    pub latest_fd_launch_probe_receipt: Option<FdLaunchProbeReceipt>,
+    pub latest_capsule_fd_launch_probe_receipt: Option<FdLaunchProbeReceipt>,
     pub latest_rollback_receipt: Option<RollbackReceipt>,
 }
 
@@ -70,6 +73,8 @@ fn service_status_report_unlocked(
             latest_install_receipt: None,
             latest_run_receipt: None,
             latest_authority_probe_receipt: None,
+            latest_fd_launch_probe_receipt: None,
+            latest_capsule_fd_launch_probe_receipt: None,
             latest_rollback_receipt: None,
         });
     }
@@ -84,6 +89,12 @@ fn service_status_report_unlocked(
         read_optional_json::<RunReceipt>(&capsule_root.join("receipts/runs/latest.json"))?;
     let latest_authority_probe_receipt = read_optional_json::<AuthorityProbeReceipt>(
         &capsule_root.join("receipts/authority/latest.json"),
+    )?;
+    let latest_fd_launch_probe_receipt = read_optional_json::<FdLaunchProbeReceipt>(
+        &capsule_root.join("receipts/fd-launch/latest.json"),
+    )?;
+    let latest_capsule_fd_launch_probe_receipt = read_optional_json::<FdLaunchProbeReceipt>(
+        &capsule_root.join("receipts/capsule-fd-launch/latest.json"),
     )?;
     let latest_rollback_receipt = read_optional_json::<RollbackReceipt>(
         &capsule_root.join("receipts/rollbacks/latest.json"),
@@ -101,6 +112,8 @@ fn service_status_report_unlocked(
         latest_install_receipt,
         latest_run_receipt,
         latest_authority_probe_receipt,
+        latest_fd_launch_probe_receipt,
+        latest_capsule_fd_launch_probe_receipt,
         latest_rollback_receipt,
     })
 }
@@ -275,6 +288,28 @@ pub fn audit_capsule_with_receipt_policy(
         }
     }
 
+    if let Some(receipt) = status.latest_fd_launch_probe_receipt.as_ref() {
+        push_fd_launch_probe_audit_checks(
+            &capsule_root,
+            "fd launch probe",
+            "fd-launch",
+            receipt,
+            receipt_policy,
+            &mut checks,
+        )?;
+    }
+
+    if let Some(receipt) = status.latest_capsule_fd_launch_probe_receipt.as_ref() {
+        push_fd_launch_probe_audit_checks(
+            &capsule_root,
+            "capsule fd launch probe",
+            "capsule-fd-launch",
+            receipt,
+            receipt_policy,
+            &mut checks,
+        )?;
+    }
+
     if let Some(receipt) = status.latest_rollback_receipt.as_ref() {
         verify_rollback_receipt_with_policy(receipt, receipt_policy)?;
         verify_latest_rollback_receipt_archive_with_policy(&capsule_root, receipt, receipt_policy)?;
@@ -403,6 +438,12 @@ pub fn verify_status_report_integrity_with_receipt_policy(
     if let Some(receipt) = status.latest_authority_probe_receipt.as_ref() {
         verify_authority_probe_receipt_with_policy(receipt, receipt_policy)?;
     }
+    if let Some(receipt) = status.latest_fd_launch_probe_receipt.as_ref() {
+        verify_fd_launch_probe_receipt_with_policy(receipt, receipt_policy)?;
+    }
+    if let Some(receipt) = status.latest_capsule_fd_launch_probe_receipt.as_ref() {
+        verify_fd_launch_probe_receipt_with_policy(receipt, receipt_policy)?;
+    }
     if let Some(receipt) = status.latest_rollback_receipt.as_ref() {
         verify_rollback_receipt_with_policy(receipt, receipt_policy)?;
     }
@@ -511,6 +552,109 @@ fn verify_latest_authority_probe_receipt_archive_with_policy(
         )));
     };
     verify_authority_probe_receipt_with_policy(&archived, receipt_policy)?;
+    Ok(())
+}
+
+fn push_fd_launch_probe_audit_checks(
+    capsule_root: &Path,
+    label: &str,
+    receipt_dir: &str,
+    receipt: &FdLaunchProbeReceipt,
+    receipt_policy: &ReceiptVerificationPolicy,
+    checks: &mut Vec<AuditCheck>,
+) -> Result<()> {
+    verify_fd_launch_probe_receipt_with_policy(receipt, receipt_policy)?;
+    verify_latest_fd_launch_probe_receipt_archive_with_policy(
+        capsule_root,
+        receipt_dir,
+        receipt,
+        receipt_policy,
+    )?;
+    checks.push(AuditCheck {
+        name: format!("latest {label} receipt body hash"),
+        detail: receipt.body_hash.clone(),
+    });
+    checks.push(AuditCheck {
+        name: format!("latest {label} receipt archive link"),
+        detail: receipt.body_hash.clone(),
+    });
+    checks.push(AuditCheck {
+        name: format!("latest {label} stdout log hash"),
+        detail: receipt.body.stdout_hash.clone(),
+    });
+    checks.push(AuditCheck {
+        name: format!("latest {label} stderr log hash"),
+        detail: receipt.body.stderr_hash.clone(),
+    });
+    checks.push(AuditCheck {
+        name: format!("latest {label} mode"),
+        detail: receipt.body.mode.clone(),
+    });
+    checks.push(AuditCheck {
+        name: format!("latest {label} authority enforcement"),
+        detail: format!(
+            "{} ({})",
+            receipt.body.authority_enforced_for_service, receipt.body.mode
+        ),
+    });
+    if let Some(public_key) = signature_public_key(&receipt.signature) {
+        checks.push(AuditCheck {
+            name: format!("latest {label} receipt signature"),
+            detail: public_key.to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn verify_fd_launch_probe_receipt_with_policy(
+    receipt: &FdLaunchProbeReceipt,
+    receipt_policy: &ReceiptVerificationPolicy,
+) -> Result<()> {
+    let actual = hash_bytes(&serde_json::to_vec(&receipt.body)?);
+    if actual != receipt.body_hash {
+        return Err(RuntimeError::ReceiptAudit(format!(
+            "fd launch probe receipt body hash mismatch: expected {}, got {actual}",
+            receipt.body_hash
+        )));
+    }
+    verify_receipt_signature_with_policy(
+        &receipt.event,
+        &receipt.body,
+        &receipt.signature,
+        "fd launch probe",
+        receipt_policy,
+    )?;
+    verify_log_hash(
+        &receipt.body.stdout_log,
+        &receipt.body.stdout_hash,
+        "fd launch probe stdout",
+    )?;
+    verify_log_hash(
+        &receipt.body.stderr_log,
+        &receipt.body.stderr_hash,
+        "fd launch probe stderr",
+    )?;
+    Ok(())
+}
+
+fn verify_latest_fd_launch_probe_receipt_archive_with_policy(
+    capsule_root: &Path,
+    receipt_dir: &str,
+    latest_receipt: &FdLaunchProbeReceipt,
+    receipt_policy: &ReceiptVerificationPolicy,
+) -> Result<()> {
+    let receipts_root = capsule_root.join("receipts").join(receipt_dir);
+    let Some(archived) =
+        find_archived_receipt::<FdLaunchProbeReceipt, _>(&receipts_root, |receipt| {
+            receipt.body_hash == latest_receipt.body_hash
+        })?
+    else {
+        return Err(RuntimeError::ReceiptAudit(format!(
+            "latest fd launch probe receipt archive not found: {}",
+            latest_receipt.body_hash
+        )));
+    };
+    verify_fd_launch_probe_receipt_with_policy(&archived, receipt_policy)?;
     Ok(())
 }
 
@@ -678,6 +822,8 @@ mod tests {
         assert!(status.latest_install_receipt.is_some());
         assert!(status.latest_run_receipt.is_some());
         assert!(status.latest_authority_probe_receipt.is_none());
+        assert!(status.latest_fd_launch_probe_receipt.is_none());
+        assert!(status.latest_capsule_fd_launch_probe_receipt.is_none());
     }
 
     fn fixture_capsule() -> (TempDir, PathBuf) {

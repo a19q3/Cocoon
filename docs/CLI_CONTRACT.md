@@ -17,6 +17,7 @@ cocoon run <capsule-name> --json
 cocoon probe-authority <capsule-name> --json
 cocoon probe-fd-exec <capsule-name> --json
 cocoon probe-fd-launch <capsule-name> --json
+cocoon probe-capsule-fd-launch <capsule-name> --json
 cocoon status <capsule-name> --json
 cocoon logs <capsule-name> --json
 cocoon check-install <capsule-name> --json
@@ -26,8 +27,13 @@ cocoon audit <capsule-name> --json
 ```
 
 Receipt-producing commands emit the same structured receipt objects written to
-disk. Aggregate commands use explicit automation fields such as `state`,
-`current_version`, `checks`, `stdout`, `stderr`, and `receipt_input`.
+disk. `probe-capsule-fd-launch` writes `event = "capsule_fd_launch_probe"` and
+uses `authority_mode = "redox-enforced-capsule-entrypoint"` only for the
+P1.2e installed-entrypoint probe, not final production `cocoon run`
+enforcement. `status --json` reports the latest authority, controlled FD
+launch, and capsule FD launch probe receipts separately. Aggregate commands use
+explicit automation fields such as `state`, `current_version`, `checks`,
+`stdout`, `stderr`, and `receipt_input`.
 
 ## Exit Codes
 
