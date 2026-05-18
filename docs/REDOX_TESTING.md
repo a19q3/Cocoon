@@ -88,6 +88,9 @@ integrated smoke gate because the current native artifact path is Redoxer.
 Run `cargo xtask redoxer-smoke` separately when checking only Redoxer build/run
 readiness.
 
+For the current Redox authority evidence chain and upstream review boundary,
+see [reports/redox-community-review-package.md](reports/redox-community-review-package.md).
+
 If either Redox target `cargo check` line is replaced by TODO, install the Rust
 target:
 

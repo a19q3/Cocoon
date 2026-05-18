@@ -1,6 +1,6 @@
 # Cocoon Production Readiness Tracker
 
-Last updated: 2026-05-17
+Last updated: 2026-05-18
 
 ## Current Verdict
 
@@ -89,6 +89,7 @@ QEMU harness minimal Redoxer staging root: PASS
 legacy pre-P1.2f run receipt hash compatibility: PASS
 deterministic signed bundle signature tamper test: PASS
 P1.2g multi-profile FD run backend QEMU coverage: PASS
+Redox authority community review package: docs/reports/redox-community-review-package.md
 ```
 
 `cargo xtask redox-smoke` currently reports these expected direct target TODOs
@@ -105,12 +106,14 @@ native Redox distribution path.
 ## Immediate Implementation Queue
 
 1. P1.2 service execution enforcement:
-   - choose and implement the Redox FD-only loader/exec strategy that replaces
-     path-based `Command` after namespace restriction;
-   - launch the service from already-open capability handles;
-   - construct the Redox namespace/preopen boundary around the actual child process;
-   - make denied access assertions part of the service execution smoke;
-   - reserve `--allow-unenforced-authority` for smoke/dev only.
+   - keep the P1.2g Redox FD-only run backend as the reviewable evidence
+     baseline;
+   - ask Redox/Ibuki to review whether `fexecve` from an already-open
+     executable FD is the intended service launcher contract;
+   - decide when Redox `cocoon run` should default to the FD backend instead of
+     requiring `--enforce-redox-authority`;
+   - keep final `authority_mode = redox-enforced` blocked until the reviewed
+     launcher contract and broader service lifecycle expectations are clear.
 2. Production signing:
    - keep `cocoon trust policy --require-signed-bundles --require-signed-receipts`
      wired into production packaging/CI profiles.
