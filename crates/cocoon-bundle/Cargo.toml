@@ -10,10 +10,13 @@ cocoon-core = { path = "../cocoon-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 thiserror = { workspace = true }
 walkdir = "2"
+hex = { workspace = true }
+rand_core = { workspace = true }
 
 [features]
 default = []

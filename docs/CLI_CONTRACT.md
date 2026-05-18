@@ -1,0 +1,41 @@
+# Cocoon CLI Contract
+
+Last updated: 2026-05-17
+
+This contract is for automation that drives Cocoon through the CLI. Current
+production validation remains CLI-only.
+
+## JSON Output
+
+The following commands support `--json` and emit stable JSON to stdout on
+success:
+
+```bash
+cocoon plan <capsule> --json
+cocoon install <capsule> --json
+cocoon run <capsule-name> --json
+cocoon probe-authority <capsule-name> --json
+cocoon probe-fd-exec <capsule-name> --json
+cocoon probe-fd-launch <capsule-name> --json
+cocoon status <capsule-name> --json
+cocoon logs <capsule-name> --json
+cocoon check-install <capsule-name> --json
+cocoon rollback <capsule-name> --to-version <version> --json
+cocoon recover <capsule-name> --json
+cocoon audit <capsule-name> --json
+```
+
+Receipt-producing commands emit the same structured receipt objects written to
+disk. Aggregate commands use explicit automation fields such as `state`,
+`current_version`, `checks`, `stdout`, `stderr`, and `receipt_input`.
+
+## Exit Codes
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Command succeeded and stdout is complete. |
+| non-zero | Command failed; stderr contains diagnostic context. Automation must not trust partial stdout. |
+
+Current failures intentionally share the non-zero CLI failure class used by
+`anyhow`. Scripts should key decisions from command success/failure and, where
+needed, from JSON fields emitted only on success.

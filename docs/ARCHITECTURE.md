@@ -8,7 +8,9 @@
 ```text
 ┌─────────────────────────────────────────────┐
 │                cocoon CLI                    │
-│ build / verify / inspect / diff-permissions │
+│ build / verify / inspect / plan / install   │
+│ check-install / recover / audit / run       │
+│ status / logs / diff                        │
 └──────────────────────┬──────────────────────┘
                        │
                        ▼
@@ -91,7 +93,7 @@ packages.
 | `cocoon-core` | Domain types, manifest schema, permission rules, validation, diffing, hashes |
 | `cocoon-bundle` | P0 `.cocoon` archive creation, parsing, path safety, hash verification |
 | `cocoon-policy` | Permission diff severity and confirmation policy |
-| `cocoon-cli` | Developer entrypoint: `build`, `verify`, `inspect`, `diff-permissions` |
+| `cocoon-cli` | Developer entrypoint: `build`, `verify`, `inspect`, `plan`, `install`, `check-install`, `recover`, `audit`, `run`, `status`, `logs`, `diff-permissions` |
 | `cocoon-runtime` | Verified staged install, receipts, future Redox namespace/spawn runtime |
 | `cocoon-testkit` | Fixture helpers and future QEMU integration harness |
 
@@ -137,6 +139,8 @@ relocatable payload installation.
 - Verified staged install and audit receipt generation.
 - macOS development and coding-style guides.
 - No claim of runtime isolation enforcement outside Redox.
+- `cocoon run` fails closed unless the operator explicitly passes
+  `--allow-unenforced-authority` for CLI smoke execution.
 
 ### P1: Redox QEMU Runtime Smoke Test
 

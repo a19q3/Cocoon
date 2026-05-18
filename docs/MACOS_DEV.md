@@ -49,7 +49,19 @@ cargo run -p cocoon-cli -- verify --strict target/capsules/hello-service.cocoon
 ```
 
 P0 capsules are unsigned by default. The non-strict command reports that as a
-warning; strict mode is intended for the future signed install path.
+warning; strict mode rejects unsigned capsules.
+
+To test signed strict mode:
+
+```bash
+cargo run -p cocoon-cli -- keygen --output target/capsules/signing-key.json
+cargo run -p cocoon-cli -- build examples/hello-service \
+  --output target/capsules/hello-service-signed.cocoon \
+  --signing-key target/capsules/signing-key.json
+cargo run -p cocoon-cli -- verify --strict \
+  target/capsules/hello-service-signed.cocoon \
+  --trusted-key target/capsules/signing-key.json
+```
 
 ## 8. Permission Diff
 

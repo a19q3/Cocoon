@@ -111,7 +111,7 @@ them, so entrypoint payloads can survive materialization as runnable files.
 
 ## Signature
 
-`manifest/signature.json` currently holds P0 placeholder metadata:
+Unsigned local-development capsules keep placeholder metadata:
 
 ```json
 {
@@ -121,6 +121,47 @@ them, so entrypoint payloads can survive materialization as runnable files.
 }
 ```
 
-`cocoon verify` accepts the unsigned placeholder for local P0 demos.
-`cocoon verify --strict` requires signature metadata and is the expected shape
-for the future signed install path.
+Signed capsules use Ed25519 over a BLAKE3 digest of the canonical
+`manifest/hashes.json` payload:
+
+```json
+{
+  "algorithm": "ed25519-blake3-v1",
+  "public_key": "hex-encoded-ed25519-public-key",
+  "signature": "hex-encoded-ed25519-signature"
+}
+```
+
+Generate a signing key and build a signed capsule:
+
+```bash
+cocoon keygen --output signing-key.json
+cocoon build examples/hello-service \
+  --output target/capsules/hello-service.cocoon \
+  --signing-key signing-key.json
+```
+
+`cocoon verify` accepts unsigned capsules for local development, but invalid
+signatures are integrity failures. `cocoon verify --strict --trusted-key
+signing-key.json` and `cocoon install --strict --trusted-key signing-key.json`
+require a valid signature from a configured trust root. Repeat `--trusted-key`
+to accept multiple roots during an explicit key-rotation window.
+Persistent trust roots live in `<install-root>/trust/trust-roots.json` and can
+be managed with `cocoon trust add/list/remove`. `cocoon trust policy
+--require-signed-bundles` turns signed-bundle verification into the install-root
+default, so `cocoon install` enforces trusted signatures without repeating
+`--strict`. `cocoon verify` can read the same policy with
+`--trust-config <path>`.
+
+Lifecycle receipts use the same structured signature object when
+`--receipt-signing-key signing-key.json` is passed to `install`, `run`,
+`rollback`, or `probe-authority`. Receipt signatures use algorithm
+`ed25519-blake3-receipt-v1` and are verified by status/log/audit paths when
+present.
+
+For production-style receipt evidence, add `--require-receipt-signatures
+--receipt-trusted-key signing-key.json` to `status`, `logs`, or `audit`.
+Repeat `--receipt-trusted-key` to trust old and new receipt signers during a
+rotation window. The same commands also read persistent receipt trust roots from
+the install-root trust config. `cocoon trust policy --require-signed-receipts`
+makes trusted receipt signatures the default for `status`, `logs`, and `audit`.

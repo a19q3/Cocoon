@@ -7,6 +7,9 @@ dependency resolution, package repositories, or whole-system updates. The payloa
 layer should converge on `pkgar`; Cocoon adds service authority: manifests,
 permission diffs, runtime plans, receipts, and rollback policy.
 
+For the live production-readiness gap list and acceptance tracker, see
+[PRODUCTION_READINESS_TRACKER.md](PRODUCTION_READINESS_TRACKER.md).
+
 ## P0.1: Style Gate
 
 Goal: make the workspace boring to maintain.
@@ -100,12 +103,32 @@ binary.
 - Capture stdout/stderr.
 - Write install and run receipts.
 
+Current `cargo xtask qemu-smoke` covers these P1.1 lifecycle steps through the
+Cocoon CLI under Redoxer/QEMU, including status readback from install/run
+receipts, per-capsule lifecycle lock rejection, and installed-payload tamper
+rejection. `cocoon run` now fails closed unless the smoke flow passes
+`--allow-unenforced-authority`, and run receipts/status/audit output record the
+`smoke-unenforced` authority mode plus stdout/stderr log hashes so execution
+evidence cannot be confused with an isolation proof.
+
 P1.1 is an execution smoke, not an isolation proof.
 
 ### P1.2: Enforcement Smoke
 
 Goal: prove Redox authority enforcement after the lifecycle is running.
 
+- Add `cocoon probe-authority` as P1.2a evidence for Redox null namespace
+  behavior: already-open file preopens remain usable, denied path/scheme opens
+  fail.
+- Add a P1.2b restricted authority child so the namespace proof happens in a
+  child process with captured logs and audited `authority_probe` receipts.
+- Add `cocoon probe-fd-exec` as P1.2c evidence that normal path-based exec is
+  blocked after entering the null namespace, keeping FD-only service launch as
+  the remaining production enforcement task.
+- Add `cocoon probe-fd-launch` as P1.2d evidence for a controlled fixture
+  launched from an inherited executable FD under the restricted namespace. This
+  may pass as `redox-controlled-service-enforced` or report
+  `redox-fd-launch-blocked` with upstream evidence.
 - Construct the service namespace.
 - Pass preopened handles.
 - Assert denied scheme/path access fails.

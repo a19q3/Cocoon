@@ -7,9 +7,11 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use cocoon_core::{CapsuleManifest, CocoonError, GuestPath, Result, hash_bytes};
+use ed25519_dalek::{Signer, Verifier};
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use rand_core::OsRng;
 
 /// Maximum path depth within a bundle (prevents deeply-nested archive attacks).
 const MAX_PATH_DEPTH: usize = 256;
@@ -50,6 +52,10 @@ pub const MANIFEST_NAME: &str = "Cocoon.toml";
 const HASH_MANIFEST_NAME: &str = "manifest/hashes.json";
 const SIGNATURE_NAME: &str = "manifest/signature.json";
 const SBOM_NAME: &str = "manifest/sbom.json";
+const SIGNATURE_ALGORITHM_NONE: &str = "none";
+pub const SIGNATURE_ALGORITHM_ED25519_BLAKE3_V1: &str = "ed25519-blake3-v1";
+const SIGNING_KEY_ALGORITHM: &str = "ed25519";
+const SIGNING_CONTEXT: &[u8] = b"cocoon-bundle-signature-v1";
 
 /// Maximum total uncompressed bundle size (100 MB).
 pub const MAX_BUNDLE_SIZE: u64 = 100 * 1024 * 1024;
@@ -63,6 +69,7 @@ pub struct BundleBuilder {
     source_dir: PathBuf,
     manifest: CapsuleManifest,
     entries: Vec<BundleEntry>,
+    signing_key: Option<BundleSigningKey>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,15 +101,21 @@ impl BundleBuilder {
         let manifest_text = fs::read_to_string(&manifest_path)
             .map_err(|err| CocoonError::Bundle(format!("cannot read manifest: {err}")))?;
         let manifest = CapsuleManifest::from_toml(&manifest_text)?;
-        manifest.validate().map_err(|err| {
-            CocoonError::Bundle(format!("manifest validation failed: {err}"))
-        })?;
+        manifest
+            .validate()
+            .map_err(|err| CocoonError::Bundle(format!("manifest validation failed: {err}")))?;
 
         Ok(Self {
             source_dir,
             manifest,
             entries: Vec::new(),
+            signing_key: None,
         })
+    }
+
+    pub fn with_signing_key(mut self, signing_key: BundleSigningKey) -> Self {
+        self.signing_key = Some(signing_key);
+        self
     }
 
     pub fn build(mut self) -> Result<Vec<u8>> {
@@ -135,24 +148,18 @@ impl BundleBuilder {
             .map_err(|err| CocoonError::Bundle(format!("json serialize: {err}")))?;
         append_file(&mut tar, HASH_MANIFEST_NAME, &hashes_json, 0o644)?;
 
-        #[cfg(not(feature = "require-signatures"))]
-        {
-            let signature = SignatureMetadata {
-                algorithm: "none".into(),
+        let signature = if let Some(signing_key) = &self.signing_key {
+            signing_key.sign_hash_manifest(&hash_manifest)?
+        } else {
+            SignatureMetadata {
+                algorithm: SIGNATURE_ALGORITHM_NONE.into(),
                 public_key: None,
                 signature: "placeholder".into(),
-            };
-            let signature_json = serde_json::to_vec_pretty(&signature)
-                .map_err(|err| CocoonError::Bundle(format!("json serialize: {err}")))?;
-            append_file(&mut tar, SIGNATURE_NAME, &signature_json, 0o644)?;
-        }
-
-        #[cfg(feature = "require-signatures")]
-        {
-            return Err(CocoonError::Bundle(
-                "signature production is not yet implemented; build without --features require-signatures".into(),
-            ));
-        }
+            }
+        };
+        let signature_json = serde_json::to_vec_pretty(&signature)
+            .map_err(|err| CocoonError::Bundle(format!("json serialize: {err}")))?;
+        append_file(&mut tar, SIGNATURE_NAME, &signature_json, 0o644)?;
 
         let encoder = tar.into_inner()?;
         Ok(encoder.finish()?)
@@ -312,7 +319,7 @@ fn guest_path_to_archive_path(root: &GuestPath, guest_path: &GuestPath) -> Resul
     archive_path_to_key(Path::new(suffix))
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SignatureMetadata {
     pub algorithm: String,
@@ -320,16 +327,131 @@ pub struct SignatureMetadata {
     pub signature: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SigningKeyDocument {
+    pub algorithm: String,
+    pub public_key: String,
+    pub secret_key: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BundleSigningKey {
+    key: ed25519_dalek::SigningKey,
+}
+
+impl BundleSigningKey {
+    pub fn generate() -> Self {
+        Self {
+            key: ed25519_dalek::SigningKey::generate(&mut OsRng),
+        }
+    }
+
+    pub fn from_document(document: SigningKeyDocument) -> Result<Self> {
+        if document.algorithm != SIGNING_KEY_ALGORITHM {
+            return Err(CocoonError::Bundle(format!(
+                "unsupported signing key algorithm '{}'",
+                document.algorithm
+            )));
+        }
+
+        let secret = decode_hex_array::<32>(&document.secret_key, "secret key")?;
+        let key = ed25519_dalek::SigningKey::from_bytes(&secret);
+        let expected_public = encode_hex(&key.verifying_key().to_bytes());
+        if expected_public != document.public_key {
+            return Err(CocoonError::Bundle(
+                "signing key public key does not match secret key".to_string(),
+            ));
+        }
+
+        Ok(Self { key })
+    }
+
+    pub fn from_json(bytes: &[u8]) -> Result<Self> {
+        let document = serde_json::from_slice(bytes)
+            .map_err(|err| CocoonError::Bundle(format!("signing key json parse: {err}")))?;
+        Self::from_document(document)
+    }
+
+    pub fn to_document(&self) -> SigningKeyDocument {
+        SigningKeyDocument {
+            algorithm: SIGNING_KEY_ALGORITHM.to_string(),
+            public_key: self.public_key_hex(),
+            secret_key: encode_hex(&self.key.to_bytes()),
+        }
+    }
+
+    pub fn to_json_pretty(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec_pretty(&self.to_document())
+            .map_err(|err| CocoonError::Bundle(format!("signing key json serialize: {err}")))
+    }
+
+    pub fn public_key_hex(&self) -> String {
+        encode_hex(&self.key.verifying_key().to_bytes())
+    }
+
+    fn sign_hash_manifest(&self, hash_manifest: &HashManifest) -> Result<SignatureMetadata> {
+        let digest = signature_digest(hash_manifest)?;
+        Ok(self.sign_digest(&digest, SIGNATURE_ALGORITHM_ED25519_BLAKE3_V1))
+    }
+
+    pub fn sign_context_bytes(
+        &self,
+        algorithm: &str,
+        context: &[u8],
+        bytes: &[u8],
+    ) -> SignatureMetadata {
+        let digest = context_digest(context, bytes);
+        self.sign_digest(&digest, algorithm)
+    }
+
+    fn sign_digest(&self, digest: &[u8; 32], algorithm: &str) -> SignatureMetadata {
+        let signature = self.key.sign(digest);
+        SignatureMetadata {
+            algorithm: algorithm.to_string(),
+            public_key: Some(self.public_key_hex()),
+            signature: encode_hex(&signature.to_bytes()),
+        }
+    }
+}
+
+pub fn public_key_from_trust_document(bytes: &[u8]) -> Result<String> {
+    if let Ok(document) = serde_json::from_slice::<SigningKeyDocument>(bytes) {
+        if document.algorithm != SIGNING_KEY_ALGORITHM {
+            return Err(CocoonError::Bundle(format!(
+                "unsupported trust key algorithm '{}'",
+                document.algorithm
+            )));
+        }
+        decode_hex_array::<32>(&document.public_key, "public key")?;
+        return Ok(document.public_key);
+    }
+
+    let text = std::str::from_utf8(bytes)
+        .map_err(|err| CocoonError::Bundle(format!("trust key is not UTF-8: {err}")))?;
+    let key = text.trim();
+    decode_hex_array::<32>(key, "public key")?;
+    Ok(key.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VerificationPolicy {
     pub require_signature: bool,
+    pub trusted_public_keys: BTreeSet<String>,
 }
 
 impl VerificationPolicy {
     pub fn strict() -> Self {
         Self {
             require_signature: true,
+            trusted_public_keys: BTreeSet::new(),
         }
+    }
+
+    pub fn with_trusted_public_key(mut self, public_key: impl Into<String>) -> Self {
+        self.trusted_public_keys.insert(public_key.into());
+        self.require_signature = true;
+        self
     }
 }
 
@@ -471,7 +593,10 @@ impl BundleReader {
                 fs::create_dir_all(parent)?;
             }
             #[cfg(unix)]
-            if destination.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+            if destination
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+            {
                 fs::remove_file(&destination)?;
             }
             fs::write(&destination, &entry.content)?;
@@ -574,30 +699,88 @@ impl BundleReader {
     }
 
     fn verify_signature(&self, policy: VerificationPolicy, issues: &mut Vec<VerificationIssue>) {
-        #[cfg(feature = "require-signatures")]
-        {
-            if self.signature.algorithm == "none"
-                || self.signature.signature == "placeholder"
-            {
-                issues.push(VerificationIssue::SignatureRequired);
-                return;
-            }
-            // Real signature verification is a future milestone.
-            // Until implemented, any non-placeholder signature is accepted so
-            // that CI / test workflows can prepare bundles with real keys.
+        if self.signature.algorithm == SIGNATURE_ALGORITHM_NONE {
+            issues.push(if policy.require_signature {
+                VerificationIssue::SignatureRequired
+            } else {
+                VerificationIssue::Unsigned
+            });
+            return;
         }
 
-        #[cfg(not(feature = "require-signatures"))]
+        if self.signature.algorithm != SIGNATURE_ALGORITHM_ED25519_BLAKE3_V1 {
+            issues.push(VerificationIssue::SignatureInvalid(format!(
+                "unsupported signature algorithm '{}'",
+                self.signature.algorithm
+            )));
+            return;
+        }
+
+        let Some(public_key) = &self.signature.public_key else {
+            issues.push(VerificationIssue::SignatureInvalid(
+                "missing public key".to_string(),
+            ));
+            return;
+        };
+
+        if let Err(error) = verify_ed25519_signature(&self.hash_manifest, &self.signature) {
+            issues.push(VerificationIssue::SignatureInvalid(error));
+            return;
+        }
+
+        if policy.require_signature && policy.trusted_public_keys.is_empty() {
+            issues.push(VerificationIssue::SignatureTrustRequired);
+        } else if !policy.trusted_public_keys.is_empty()
+            && !policy.trusted_public_keys.contains(public_key)
         {
-            if self.signature.algorithm == "none" {
-                if policy.require_signature {
-                    issues.push(VerificationIssue::SignatureRequired);
-                } else {
-                    issues.push(VerificationIssue::Unsigned);
-                }
-            }
+            issues.push(VerificationIssue::SignatureUntrusted {
+                public_key: public_key.clone(),
+            });
         }
     }
+}
+
+fn verify_ed25519_signature(
+    hash_manifest: &HashManifest,
+    signature: &SignatureMetadata,
+) -> std::result::Result<(), String> {
+    let digest = signature_digest(hash_manifest).map_err(|err| err.to_string())?;
+    verify_ed25519_digest(signature, &digest)
+}
+
+pub fn verify_context_signature(
+    signature: &SignatureMetadata,
+    expected_algorithm: &str,
+    context: &[u8],
+    bytes: &[u8],
+) -> std::result::Result<(), String> {
+    if signature.algorithm != expected_algorithm {
+        return Err(format!(
+            "unsupported signature algorithm '{}'",
+            signature.algorithm
+        ));
+    }
+    let digest = context_digest(context, bytes);
+    verify_ed25519_digest(signature, &digest)
+}
+
+fn verify_ed25519_digest(
+    signature: &SignatureMetadata,
+    digest: &[u8; 32],
+) -> std::result::Result<(), String> {
+    let public_key = signature
+        .public_key
+        .as_deref()
+        .ok_or_else(|| "missing public key".to_string())
+        .and_then(|key| decode_hex_array::<32>(key, "public key").map_err(|err| err.to_string()))?;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&public_key)
+        .map_err(|err| format!("invalid public key: {err}"))?;
+    let signature_bytes =
+        decode_hex_array::<64>(&signature.signature, "signature").map_err(|err| err.to_string())?;
+    let ed25519_signature = ed25519_dalek::Signature::from_bytes(&signature_bytes);
+    verifying_key
+        .verify(digest, &ed25519_signature)
+        .map_err(|err| format!("signature verification failed: {err}"))
 }
 
 fn parse_manifest(entries: &BTreeMap<String, ArchiveEntry>) -> Result<CapsuleManifest> {
@@ -626,6 +809,35 @@ fn entry_content<'a>(
         .get(path)
         .map(|entry| entry.content.as_slice())
         .ok_or_else(|| CocoonError::Bundle(format!("missing {label}")))
+}
+
+/// Normalizes a filesystem path into a bundle archive key.
+fn signature_digest(hash_manifest: &HashManifest) -> Result<[u8; 32]> {
+    let canonical = serde_json::to_vec(hash_manifest)
+        .map_err(|err| CocoonError::Bundle(format!("json serialize: {err}")))?;
+    Ok(context_digest(SIGNING_CONTEXT, &canonical))
+}
+
+fn context_digest(context: &[u8], bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(context);
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
+fn decode_hex_array<const N: usize>(value: &str, label: &str) -> Result<[u8; N]> {
+    let bytes = hex::decode(value)
+        .map_err(|err| CocoonError::Bundle(format!("{label} is not valid hex: {err}")))?;
+    bytes.try_into().map_err(|bytes: Vec<u8>| {
+        CocoonError::Bundle(format!(
+            "{label} must be {N} bytes, got {} bytes",
+            bytes.len()
+        ))
+    })
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    hex::encode(bytes)
 }
 
 /// Normalizes a filesystem path into a bundle archive key.
@@ -726,6 +938,11 @@ pub enum VerificationIssue {
     UnsupportedHashAlgorithm {
         algorithm: String,
     },
+    SignatureTrustRequired,
+    SignatureInvalid(String),
+    SignatureUntrusted {
+        public_key: String,
+    },
 }
 
 impl VerificationIssue {
@@ -766,6 +983,11 @@ impl fmt::Display for VerificationIssue {
             Self::SignatureRequired => f.write_str("bundle signature is required"),
             Self::UnsupportedHashAlgorithm { algorithm } => {
                 write!(f, "unsupported hash algorithm '{algorithm}'")
+            }
+            Self::SignatureTrustRequired => f.write_str("bundle signature trust root is required"),
+            Self::SignatureInvalid(reason) => write!(f, "bundle signature is invalid: {reason}"),
+            Self::SignatureUntrusted { public_key } => {
+                write!(f, "bundle signature key is not trusted: {public_key}")
             }
         }
     }
@@ -969,6 +1191,73 @@ cmd = "/app/bin/test"
     }
 
     #[test]
+    fn signed_bundle_passes_strict_with_trusted_key() {
+        let signing_key = BundleSigningKey::generate();
+        let public_key = signing_key.public_key_hex();
+        let bytes = signed_fixture_bundle(signing_key);
+        let reader = BundleReader::from_bytes(&bytes).unwrap();
+        let issues = reader
+            .verify_with_policy(VerificationPolicy::strict().with_trusted_public_key(public_key))
+            .unwrap();
+
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn signed_bundle_strict_requires_trust_root() {
+        let bytes = signed_fixture_bundle(BundleSigningKey::generate());
+        let reader = BundleReader::from_bytes(&bytes).unwrap();
+        let issues = reader
+            .verify_with_policy(VerificationPolicy::strict())
+            .unwrap();
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| matches!(issue, VerificationIssue::SignatureTrustRequired))
+        );
+    }
+
+    #[test]
+    fn signed_bundle_strict_rejects_untrusted_key() {
+        let bytes = signed_fixture_bundle(BundleSigningKey::generate());
+        let other_key = BundleSigningKey::generate().public_key_hex();
+        let reader = BundleReader::from_bytes(&bytes).unwrap();
+        let issues = reader
+            .verify_with_policy(VerificationPolicy::strict().with_trusted_public_key(other_key))
+            .unwrap();
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| matches!(issue, VerificationIssue::SignatureUntrusted { .. }))
+        );
+    }
+
+    #[test]
+    fn signed_bundle_rejects_signature_tamper() {
+        let mut entries = entries_from_bundle(&signed_fixture_bundle(BundleSigningKey::generate()));
+        let mut signature: SignatureMetadata =
+            serde_json::from_slice(entries.get(SIGNATURE_NAME).unwrap()).unwrap();
+        signature.signature = format!("00{}", &signature.signature[2..]);
+        entries.insert(
+            SIGNATURE_NAME.to_string(),
+            serde_json::to_vec_pretty(&signature).unwrap(),
+        );
+        let bytes = archive_from_entries(entries);
+        let reader = BundleReader::from_bytes(&bytes).unwrap();
+        let issues = reader
+            .verify_with_policy(VerificationPolicy::strict())
+            .unwrap();
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| matches!(issue, VerificationIssue::SignatureInvalid(_)))
+        );
+    }
+
+    #[test]
     fn rejects_corrupted_hash_manifest() {
         let mut entries = fixture_entries();
         entries.insert(HASH_MANIFEST_NAME.to_string(), b"not-json".to_vec());
@@ -1020,6 +1309,14 @@ cmd = "/app/bin/test"
     }
 
     fn fixture_bundle() -> Vec<u8> {
+        fixture_bundle_with_key(None)
+    }
+
+    fn signed_fixture_bundle(signing_key: BundleSigningKey) -> Vec<u8> {
+        fixture_bundle_with_key(Some(signing_key))
+    }
+
+    fn fixture_bundle_with_key(signing_key: Option<BundleSigningKey>) -> Vec<u8> {
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("src");
         fs::create_dir(&src).unwrap();
@@ -1039,7 +1336,12 @@ cmd = "/app/bin/test"
         write_executable(src.join("bin/test"), b"#!/bin/sh\n").unwrap();
         fs::write(src.join("hello.txt"), "hello world").unwrap();
 
-        BundleBuilder::new(&src).unwrap().build().unwrap()
+        let builder = BundleBuilder::new(&src).unwrap();
+        if let Some(signing_key) = signing_key {
+            builder.with_signing_key(signing_key).build().unwrap()
+        } else {
+            builder.build().unwrap()
+        }
     }
 
     fn fixture_entries() -> BTreeMap<String, Vec<u8>> {

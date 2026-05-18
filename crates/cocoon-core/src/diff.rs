@@ -67,10 +67,7 @@ impl AuthorityDiff {
     }
 }
 
-pub fn diff_permissions(
-    old: &CapsuleManifest,
-    new: &CapsuleManifest,
-) -> PermissionDiff {
+pub fn diff_permissions(old: &CapsuleManifest, new: &CapsuleManifest) -> PermissionDiff {
     let old_permissions = sorted_allowed_permissions(old);
     let new_permissions = sorted_allowed_permissions(new);
     let mut added = Vec::new();
@@ -107,17 +104,11 @@ pub fn diff_permissions(
     }
 }
 
-pub fn diff_capabilities(
-    old: &CapsuleManifest,
-    new: &CapsuleManifest,
-) -> PermissionDiff {
+pub fn diff_capabilities(old: &CapsuleManifest, new: &CapsuleManifest) -> PermissionDiff {
     diff_permissions(old, new)
 }
 
-pub fn diff_authority(
-    old: &CapsuleManifest,
-    new: &CapsuleManifest,
-) -> AuthorityDiff {
+pub fn diff_authority(old: &CapsuleManifest, new: &CapsuleManifest) -> AuthorityDiff {
     AuthorityDiff {
         permissions: diff_permissions(old, new),
         schemes: diff_rules(&old.schemes, &new.schemes, same_scheme_identity),

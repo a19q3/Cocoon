@@ -11,6 +11,10 @@ official Redox toolchain path and later exercised inside Redox/QEMU.
 This flow does **not** claim full Redox runtime isolation yet. Namespace,
 scheme-visibility, and preopened-handle enforcement belong to P1.2.
 
+Current P1.1 validation is CLI-only. The acceptance surface is the `cocoon`
+command and the `cargo xtask` smoke commands that drive it; this flow does not
+claim separate library API, service manager, or non-CLI entrypoint coverage.
+
 ## Goals
 
 The Linux deployment test flow proves:
@@ -130,19 +134,50 @@ Expected sections:
 == Host smoke ==
 PASS host build cocoon
 PASS build hello-service.cocoon
+PASS build hello-service v2 capsule
 PASS verify capsule
+PASS generate bundle signing key
+PASS build signed capsule
+PASS strict verify signed capsule
 PASS generate runtime plan
 PASS image overlay prepared
 
 == Redox target smoke ==
 PASS redox link probe cargo check
 PASS cocoon-cli redox cargo check
+TODO redox link probe binary link (requires Redox C sysroot/toolchain)
+TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
 
 == Redoxer smoke ==
 PASS/SKIP ...
 
 == QEMU smoke ==
-TODO ...
+PASS/SKIP boot redox qemu
+PASS/SKIP run cocoon verify inside redox
+PASS/SKIP run cocoon plan inside redox
+PASS/SKIP report missing service status inside redox
+PASS/SKIP reject check-install before install inside redox
+PASS/SKIP reject run before install inside redox
+PASS/SKIP reject locked capsule operations inside redox
+PASS/SKIP install capsule inside redox
+PASS/SKIP report installed service status inside redox
+PASS/SKIP probe Redox authority inside redox
+PASS/SKIP classify Redox FD-only service launch gap inside redox
+PASS/SKIP/BLOCKED probe Redox FD-only controlled service launch inside redox
+PASS/SKIP audit Redox authority probe receipt inside redox
+PASS/SKIP recover temporary install state inside redox
+PASS/SKIP reject duplicate install inside redox
+PASS/SKIP reject logs before run inside redox
+PASS/SKIP reject tampered latest install receipt inside redox
+PASS/SKIP reject unenforced authority run inside redox
+PASS/SKIP run hello-service inside redox
+PASS/SKIP report upgraded service status inside redox
+PASS/SKIP roll back capsule inside redox
+PASS/SKIP audit receipts inside redox
+PASS/SKIP reject current rollback version inside redox
+PASS/SKIP reject missing rollback version inside redox
+PASS/SKIP reject tampered install inside redox
+PASS/SKIP collect receipts/logs
 ```
 
 Interpretation:
@@ -228,7 +263,33 @@ cargo install redoxer
 cargo xtask redoxer-smoke
 ```
 
-## Step 5: Interpret Redoxer Results
+## Step 5: Redox Release Artifact
+
+Run:
+
+```bash
+cargo xtask redox-package
+```
+
+Expected output:
+
+```text
+== Redox package ==
+PASS host build cocoon for package staging
+PASS package signing key generated
+PASS package signed capsule built
+PASS package trust policy staged
+PASS package redoxer cocoon binary staged
+PASS package release manifest written
+Package root: target/redox-package/cocoon-redox
+```
+
+The artifact directory contains a Redoxer-built `bin/cocoon` when Redoxer is
+available, a signed smoke capsule, a production trust policy, and
+`release-manifest.json` with BLAKE3 hashes. This is the current native Redox
+artifact path until a Redox Cookbook/pkgar recipe is added.
+
+## Step 6: Interpret Redoxer Results
 
 ### Case A: `redox-link-probe` fails
 
@@ -324,8 +385,7 @@ Verify:
 cargo run -p cocoon-cli -- verify target/capsules/hello-service.cocoon
 ```
 
-Strict verify is expected to fail for unsigned P0 capsules unless signing has
-been added:
+Strict verify fails for unsigned local-development capsules:
 
 ```bash
 cargo run -p cocoon-cli -- verify --strict target/capsules/hello-service.cocoon
@@ -338,6 +398,25 @@ Bundle signature is required but missing.
 ```
 
 This is correct for P0 unsigned local development.
+
+For a signed capsule, generate a signing key, sign during build, and verify
+against the trusted key:
+
+```bash
+cargo run -p cocoon-cli -- keygen --output target/capsules/signing-key.json
+cargo run -p cocoon-cli -- build examples/hello-service \
+  --output target/capsules/hello-service-signed.cocoon \
+  --signing-key target/capsules/signing-key.json
+cargo run -p cocoon-cli -- verify --strict \
+  target/capsules/hello-service-signed.cocoon \
+  --trusted-key target/capsules/signing-key.json
+```
+
+Expected:
+
+```text
+Verification passed.
+```
 
 ## Step 7: Runtime Plan Check
 
@@ -450,9 +529,10 @@ DOCUMENT cocoon-cli dependency blocker
 But that fallback must be explicitly documented and must not be presented as
 full Cocoon CLI support.
 
-## Next Stage: P1.1c QEMU Verify/Plan Smoke
+## P1.1c QEMU Verify/Plan Smoke
 
-After P1.1b-real passes, implement P1.1c:
+After P1.1b-real passes, `cargo xtask qemu-smoke` runs the CLI-only P1.1c
+smoke through Redoxer/QEMU:
 
 ```text
 - prepare Redox image overlay;
@@ -465,20 +545,96 @@ After P1.1b-real passes, implement P1.1c:
 - assert expected output on the Linux host.
 ```
 
-P1.1c still does not claim full runtime isolation.
-
-## Later Stage: P1.1d Install/Run/Log/Receipt Smoke
-
-Only after verify/plan works inside Redox:
+Expected current output when Redoxer is available and the host smoke capsule has
+already been prepared:
 
 ```text
+== QEMU smoke ==
+PASS boot redox qemu
+PASS run cocoon verify inside redox
+PASS run cocoon plan inside redox
+PASS report missing service status inside redox
+PASS reject check-install before install inside redox
+PASS reject run before install inside redox
+PASS reject locked capsule operations inside redox
+PASS install capsule inside redox
+PASS report installed service status inside redox
+PASS probe Redox authority inside redox
+PASS classify Redox FD-only service launch gap inside redox
+PASS/BLOCKED probe Redox FD-only controlled service launch inside redox
+PASS audit Redox authority probe receipt inside redox
+PASS redox authority probe receipt audited
+PASS recover temporary install state inside redox
+PASS reject duplicate install inside redox
+PASS reject logs before run inside redox
+PASS reject tampered latest install receipt inside redox
+PASS reject unenforced authority run inside redox
+PASS run hello-service inside redox
+PASS report upgraded service status inside redox
+PASS roll back capsule inside redox
+PASS audit receipts inside redox
+PASS reject current rollback version inside redox
+PASS reject missing rollback version inside redox
+PASS reject tampered install inside redox
+PASS collect receipts/logs
+```
+
+P1.1c still does not claim full runtime isolation.
+
+## P1.1d Install/Run/Log/Receipt Smoke
+
+After verify/plan works inside Redox, `cargo xtask qemu-smoke` continues in the
+same CLI-only flow:
+
+```text
+- read not-installed status before install;
+- confirm check-install is rejected before install;
+- confirm run is rejected before install;
+- confirm a held capsule lock blocks
+  install/recover/check-install/status/logs/run/audit/rollback;
 - install capsule;
+- read installed status before first run after latest receipt verification;
+- run `cocoon probe-authority` to spawn a restricted Redox authority child,
+  enter the Redox null namespace, confirm an already-open file preopen remains
+  readable, and confirm denied path/scheme opens fail;
+- run `cocoon probe-fd-exec` to confirm normal path-based exec is blocked after
+  entering the null namespace, classifying the remaining FD-only service launch
+  blocker without claiming production `run` enforcement;
+- run `cocoon probe-fd-launch` to attempt a controlled fixture launch from an
+  inherited executable FD under the restricted namespace, recording either
+  controlled-service enforcement evidence or a precise blocked result;
+- run `cocoon audit` to verify the authority probe receipt body, archive link,
+  and captured child stdout/stderr hashes;
+- recover temporary install state left by an interrupted install;
+- recover with `--break-lock` to clear an explicitly stale lock;
+- confirm reinstalling the same capsule version is rejected;
 - stage and promote install tree;
-- run hello-service;
+- confirm logs are rejected before any run receipt exists;
+- confirm install rejects a rewritten latest install receipt before an upgrade;
+- confirm `cocoon run` fails closed unless the operator explicitly acknowledges
+  that Redox namespace/preopen enforcement is not active in the smoke runner;
+- run hello-service with `--allow-unenforced-authority`;
+- confirm the run receipt, status, and audit output record
+  stdout/stderr log hashes and `smoke-unenforced` authority mode;
 - capture stdout/stderr;
 - write install/run receipts;
 - collect logs.
+- read the latest captured stdout through `cocoon logs` after latest-run
+  receipt/log hash verification;
+- install a second capsule version;
+- read upgraded status before rollback after latest receipt verification;
+- roll back to the first version;
+- audit lifecycle receipt body hashes and latest-to-archive receipt links;
+- confirm rollback to the already-current version is rejected;
+- confirm rollback to a missing version is rejected;
+- verify the current installed tree through `cocoon check-install`;
+- tamper with the installed executable and confirm `cocoon check-install`
+  and `cocoon status` reject the install before any later run can use it;
+- read status back from the latest install/run receipts.
 ```
+
+This stage still uses Redoxer/QEMU as an execution bridge and does not construct
+the final Redox namespace enforcement model.
 
 ## Later Stage: P1.2 Runtime Enforcement
 
@@ -488,8 +644,11 @@ P1.2 is the first stage that should prove Redox runtime enforcement:
 - constructed namespace;
 - scheme visibility;
 - preopened handles;
-- denied scheme/path access fails;
+- denied scheme/path access fails during actual service execution;
 - service cannot access undeclared authority.
 ```
 
 Until P1.2 passes, Cocoon should not claim to enforce Redox isolation.
+The current P1.2c probe makes that boundary explicit: path-based launch is not
+the production enforcement path after namespace restriction; arbitrary service
+execution still needs an FD-only loader/exec implementation.

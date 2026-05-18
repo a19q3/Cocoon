@@ -348,9 +348,7 @@ impl<'de> Deserialize<'de> for SchemeTarget {
 fn validate_identifier(raw: &str, label: &str) -> crate::Result<()> {
     validate_non_empty_text(raw, label)?;
     let mut chars = raw.chars();
-    let starts_valid = chars
-        .next()
-        .is_some_and(|ch| ch.is_ascii_lowercase());
+    let starts_valid = chars.next().is_some_and(|ch| ch.is_ascii_lowercase());
     let body_valid = raw
         .chars()
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_' | '.'));

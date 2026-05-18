@@ -35,10 +35,30 @@ Before install, Cocoon verifies:
 - every listed file exists in the archive;
 - each payload BLAKE3 hash matches the hash manifest;
 - generated metadata is not accepted as user payload;
-- strict mode rejects unsigned capsules.
+- invalid signatures are integrity failures;
+- strict mode rejects unsigned or untrusted capsules.
 
 Unsigned P0 capsules are allowed for local development, but the issue remains
 visible in `cocoon verify`.
+
+Signed bundle mode uses `cocoon keygen` to create an Ed25519 signing key,
+`cocoon build --signing-key` to sign the canonical hash manifest, and
+`cocoon verify --strict --trusted-key` / `cocoon install --strict
+--trusted-key` to require a signature from a configured trust root. Repeat
+`--trusted-key` to accept multiple roots during an explicit key-rotation
+window. Trust roots can also be persisted in
+`<install-root>/trust/trust-roots.json` with:
+
+```bash
+cocoon trust add --key signing-key.json --kind bundle --install-root /pkg/cocoon
+cocoon trust policy --require-signed-bundles --install-root /pkg/cocoon
+```
+
+`cocoon install` merges the persistent bundle trust roots with any explicit
+`--trusted-key` values. When the trust policy requires signed bundles, install
+uses strict verification even if `--strict` was not passed. `cocoon verify` can
+use the same file and policy with
+`--trust-config /pkg/cocoon/trust/trust-roots.json`.
 
 ## Permission Diff on Update
 
@@ -89,3 +109,108 @@ Each verified install writes a receipt outside the signed payload area:
 `body_hash` is computed from the canonical receipt body, excluding `body_hash`
 and `signature`, so the receipt is not self-referential. The `previous_receipt`
 field points at the previous receipt body hash.
+
+Lifecycle receipts can be signed with the same local Ed25519 key format used for
+bundle signing. Pass `--receipt-signing-key` to `install`, `run`, `rollback`, or
+`probe-authority` to attach an `ed25519-blake3-receipt-v1` signature over the
+canonical receipt body and event context. `cocoon status`, `cocoon logs`, and
+`cocoon audit` continue to accept unsigned local-development receipts, but when
+a receipt signature is present they verify it before trusting the receipt or
+printing evidence. Tampering only with a receipt signature is therefore detected
+without needing to change the receipt body hash.
+
+Production-style CLI checks can require signed receipts by passing
+`--require-receipt-signatures --receipt-trusted-key <key>` to `status`, `logs`,
+or `audit`. Repeat `--receipt-trusted-key` to accept old and new receipt
+signers during a key-rotation window. In that mode unsigned receipts, receipts
+signed outside the trusted set, and malformed signatures are rejected before
+evidence is printed.
+
+Receipt trust roots can also be persisted with:
+
+```bash
+cocoon trust add --key signing-key.json --kind receipt --install-root /pkg/cocoon
+cocoon trust policy --require-signed-receipts --install-root /pkg/cocoon
+```
+
+`status`, `logs`, and `audit` merge persistent receipt trust roots with explicit
+`--receipt-trusted-key` values. When the trust policy requires signed receipts,
+those commands enforce trusted receipt signatures even if
+`--require-receipt-signatures` was not passed.
+
+Each smoke run also writes a run receipt and stdout/stderr logs under the
+capsule install tree. `cocoon status` reads the latest install and run receipts
+to report the current version, last run result, and log paths; `cocoon logs`
+prints the latest captured stdout/stderr. In P1.1 this is audit evidence for the
+CLI execution flow, not a claim that Redox namespace enforcement has been
+proven.
+
+`cocoon audit` recomputes the body hash for the latest install, run, and
+rollback receipts when present, verifies the latest install receipt's previous
+receipt link, and checks that the current version matches the latest rollback
+target or latest install version. It also confirms latest install/run/rollback
+receipts are backed by their archived receipt files, so rewriting only a mutable
+`latest.json` pointer is detected. It detects receipt body tampering, but does
+not replace the future signed receipt trust chain. Run receipts also carry
+stdout/stderr log hashes, and audit recomputes those hashes from the captured
+log files so log tampering is detected.
+Before installing a new version, Cocoon verifies the current latest install
+receipt and its archived version receipt before using it as the new
+`previous_receipt` link, so an upgrade cannot silently chain onto a rewritten
+latest install pointer.
+`cocoon status` verifies the current installed tree and latest receipt integrity
+before reporting state, and `cocoon logs` performs the same current-tree,
+latest-run receipt, and log hash verification before printing captured output,
+so status and log readback fail closed on tampering.
+
+Before running, reporting, auditing, or printing logs for an installed capsule,
+Cocoon verifies the current install tree against the materialized
+`manifest/hashes.json`, checks the manifest hash, and requires the declared
+entrypoint to remain executable. `cocoon check-install` exposes the same
+installed-tree integrity check for smoke tests and operators.
+Because the current process launcher does not yet construct the Redox namespace,
+scheme visibility, or preopened handles, `cocoon run` fails closed by default.
+The `--allow-unenforced-authority` flag is only for CLI smoke execution and must
+not be treated as an isolation guarantee. Run receipts record log hashes,
+`authority_enforced`, and `authority_mode`; `cocoon status` / `cocoon audit`
+surface those fields so smoke execution remains visible in later evidence.
+
+`cocoon probe-authority` is P1.2a/P1.2b evidence for Redox authority mechanics.
+On Redox the parent process spawns an authority child. The child opens declared
+file preopen evidence before entering the null namespace, then verifies that the
+already-open file remains readable while denied file paths and hidden schemes
+cannot be opened by name. The parent captures the child logs, writes an
+`authority_probe` receipt, and `cocoon audit` verifies the receipt body, archive
+link, and log hashes. This proves the namespace/preopen primitive used by the
+future runner; it does not yet mean `cocoon run` launches arbitrary services
+under enforced authority.
+
+`cocoon probe-fd-exec` is P1.2c gap evidence. On Redox it verifies the
+installed capsule, then tries to enter the null namespace before launching the
+current Cocoon binary by path. The expected result is that normal path-based
+exec fails after the namespace is restricted. A passing probe therefore
+classifies the remaining production blocker: Cocoon must launch arbitrary
+services through an FD-only loader/exec path before `cocoon run` can mark
+`authority_enforced=true`.
+
+`cocoon probe-fd-launch` is P1.2d controlled-service evidence. On Redox it
+opens the controlled fixture executable and declared preopen evidence before
+restriction, spawns a child, enters the null namespace in that child, and then
+attempts to launch the fixture through the inherited executable FD. A successful
+probe records `redox-controlled-service-enforced`: a controlled fixture service
+ran under the restricted namespace and proved declared preopen access plus
+denied path/scheme rejection. This is still not production arbitrary-service
+execution, so `cocoon run` remains fail-closed until installed capsule services
+use the same FD-only launch boundary.
+
+Install, recover, audit, status, logs, run, rollback, and check-install acquire
+a per-capsule lock under the install root before reading or mutating the active
+capsule tree. If another operation already holds the lock, the CLI fails closed
+instead of racing the current pointer, logs, receipts, or installed payload.
+
+`cocoon recover` uses the same lock before removing recoverable temporary state
+left by interrupted lifecycle operations, including staging directories,
+`current.tmp`, `current-version.tmp`, and temporary latest receipt files. It
+does not rewrite receipts or choose a new current version. By default it fails
+closed when a capsule lock exists; `--break-lock` is an explicit operator escape
+hatch for a known stale lock after a crash.
