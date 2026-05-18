@@ -104,18 +104,27 @@ fn cmd_verify(capsule: PathBuf, strict: bool) -> Result<()> {
     };
     let issues = reader.verify_with_policy(policy)?;
 
+    let has_integrity_failures = issues
+        .iter()
+        .any(cocoon_bundle::VerificationIssue::is_integrity_failure);
+    let has_warnings = issues
+        .iter()
+        .any(|issue| !issue.is_integrity_failure());
+
     if issues.is_empty() {
         println!("Verification passed.");
     } else {
         println!("{}", format_verification_issues(&issues));
     }
 
-    if issues
-        .iter()
-        .any(cocoon_bundle::VerificationIssue::is_integrity_failure)
-    {
+    if has_integrity_failures {
         bail!("verification failed");
     }
+
+    if has_warnings {
+        println!("\nVerification passed with warnings.");
+    }
+
     Ok(())
 }
 
@@ -157,7 +166,7 @@ fn cmd_diff_permissions(old: PathBuf, new: PathBuf) -> Result<()> {
     .with_context(|| format!("cannot diff invalid new capsule '{}'", new.display()))?
     .into_reader();
 
-    let diff = cocoon_core::diff_authority(&old_reader.manifest, &new_reader.manifest)?;
+    let diff = cocoon_core::diff_authority(&old_reader.manifest, &new_reader.manifest);
     let report = cocoon_policy::format_authority_diff_report(&diff);
     println!("{}", report);
     Ok(())
@@ -202,6 +211,11 @@ fn format_verification_issues(issues: &[cocoon_bundle::VerificationIssue]) -> St
             }
             cocoon_bundle::VerificationIssue::SignatureRequired => {
                 lines.push("Bundle signature is required but missing.".to_string());
+            }
+            cocoon_bundle::VerificationIssue::UnsupportedHashAlgorithm { algorithm } => {
+                lines.push(format!(
+                    "Unsupported hash algorithm '{algorithm}' in hash manifest."
+                ));
             }
         }
     }

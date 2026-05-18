@@ -5,6 +5,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cocoon_bundle::{BundleReader, VerificationIssue};
 use cocoon_core::{hash_bytes, hash_permissions};
 
+use fs2::FileExt;
+
+/// Acquires an advisory file lock so that only one install per capsule can run at a time.
+fn with_capsule_lock<T>(capsule_root: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let lock_path = capsule_root.join(".install.lock");
+    fs::create_dir_all(capsule_root)?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)?;
+    if let Err(err) = file.try_lock_exclusive() {
+        return Err(RuntimeError::AlreadyInstalled(format!(
+            "another installation is in progress for this capsule: {err}"
+        )));
+    }
+    let result = f();
+    let _ = file.unlock();
+    let _ = fs::remove_file(&lock_path);
+    result
+}
+
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 
 #[derive(Debug, thiserror::Error)]
@@ -70,39 +92,47 @@ pub fn install_capsule(capsule_path: &Path, install_root: &Path) -> Result<Insta
     let capsule_name = reader.manifest.capsule.name.to_string();
     let capsule_version = reader.manifest.capsule.version.to_string();
     let capsule_root = install_root.join("capsules").join(&capsule_name);
-    let versions_root = capsule_root.join("versions");
-    let version_dir = versions_root.join(&capsule_version);
-    if version_dir.exists() {
-        return Err(RuntimeError::AlreadyInstalled(format!(
-            "{capsule_name} {capsule_version}"
-        )));
-    }
 
-    fs::create_dir_all(&versions_root)?;
-    let staging_dir = staging_dir(install_root, &capsule_name, &capsule_version)?;
-    if staging_dir.exists() {
-        fs::remove_dir_all(&staging_dir)?;
-    }
-    fs::create_dir_all(&staging_dir)?;
+    with_capsule_lock(&capsule_root, || {
+        let versions_root = capsule_root.join("versions");
+        let version_dir = versions_root.join(&capsule_version);
 
-    if let Err(err) = reader.materialize(&staging_dir) {
-        let _ = fs::remove_dir_all(&staging_dir);
-        return Err(RuntimeError::Bundle(err));
-    }
+        fs::create_dir_all(&versions_root)?;
+        let staging_dir = staging_dir(install_root, &capsule_name, &capsule_version)?;
+        if staging_dir.exists() {
+            fs::remove_dir_all(&staging_dir)?;
+        }
+        fs::create_dir_all(&staging_dir)?;
 
-    let receipt = build_install_receipt(
-        &reader,
-        &version_dir,
-        &bytes,
-        previous_receipt_hash(&capsule_root)?,
-    )?;
+        if let Err(err) = reader.materialize(&staging_dir) {
+            if let Err(cleanup_err) = fs::remove_dir_all(&staging_dir) {
+                tracing::warn!("failed to remove staging directory: {cleanup_err}");
+            }
+            return Err(RuntimeError::Bundle(err));
+        }
 
-    fs::rename(&staging_dir, &version_dir)?;
-    write_receipts(&capsule_root, &capsule_version, &receipt)?;
-    promote_current(&capsule_root, &capsule_version)?;
-    write_current_pointer(&capsule_root, &capsule_version)?;
+        let receipt = build_install_receipt(
+            &reader,
+            &version_dir,
+            &bytes,
+            previous_receipt_hash(&capsule_root)?,
+        )?;
 
-    Ok(receipt)
+        match fs::rename(&staging_dir, &version_dir) {
+            Ok(()) => {}
+            Err(_) if version_dir.exists() => {
+                return Err(RuntimeError::AlreadyInstalled(format!(
+                    "{capsule_name} {capsule_version}"
+                )));
+            }
+            Err(err) => return Err(err.into()),
+        }
+        write_receipts(&capsule_root, &capsule_version, &receipt)?;
+        promote_current(&capsule_root, &capsule_version)?;
+        write_current_pointer(&capsule_root, &capsule_version)?;
+
+        Ok(receipt)
+    })
 }
 
 fn staging_dir(install_root: &Path, capsule_name: &str, capsule_version: &str) -> Result<PathBuf> {

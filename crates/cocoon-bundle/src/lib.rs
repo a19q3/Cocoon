@@ -11,11 +11,52 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 
+/// Maximum path depth within a bundle (prevents deeply-nested archive attacks).
+const MAX_PATH_DEPTH: usize = 256;
+
+/// Wraps a [`Read`] to enforce a decompressed-size limit (gzip-bomb protection).
+struct CountingReader<R> {
+    inner: R,
+    count: u64,
+    limit: u64,
+}
+
+impl<R> CountingReader<R> {
+    fn new(inner: R, limit: u64) -> Self {
+        Self {
+            inner,
+            count: 0,
+            limit,
+        }
+    }
+}
+
+impl<R: std::io::Read> std::io::Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.count += n as u64;
+        if self.count > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("decompressed data exceeds maximum of {} bytes", self.limit),
+            ));
+        }
+        Ok(n)
+    }
+}
+
 pub const COCOON_EXTENSION: &str = "cocoon";
 pub const MANIFEST_NAME: &str = "Cocoon.toml";
 const HASH_MANIFEST_NAME: &str = "manifest/hashes.json";
 const SIGNATURE_NAME: &str = "manifest/signature.json";
 const SBOM_NAME: &str = "manifest/sbom.json";
+
+/// Maximum total uncompressed bundle size (100 MB).
+pub const MAX_BUNDLE_SIZE: u64 = 100 * 1024 * 1024;
+/// Maximum number of files in a bundle.
+pub const MAX_FILE_COUNT: usize = 10_000;
+/// Maximum size of a single file in a bundle (10 MB).
+pub const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct BundleBuilder {
@@ -34,10 +75,16 @@ pub struct BundleEntry {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct HashManifest {
     pub files: BTreeMap<String, String>,
     pub manifest_hash: String,
+    /// Canonical hash algorithm identifier. Defaults to `"blake3"` when absent.
+    #[serde(default = "default_hash_alg")]
+    pub algorithm: String,
+}
+
+fn default_hash_alg() -> String {
+    "blake3".to_string()
 }
 
 impl BundleBuilder {
@@ -47,6 +94,9 @@ impl BundleBuilder {
         let manifest_text = fs::read_to_string(&manifest_path)
             .map_err(|err| CocoonError::Bundle(format!("cannot read manifest: {err}")))?;
         let manifest = CapsuleManifest::from_toml(&manifest_text)?;
+        manifest.validate().map_err(|err| {
+            CocoonError::Bundle(format!("manifest validation failed: {err}"))
+        })?;
 
         Ok(Self {
             source_dir,
@@ -58,6 +108,7 @@ impl BundleBuilder {
     pub fn build(mut self) -> Result<Vec<u8>> {
         self.collect_entries()?;
         self.validate_declared_entrypoint()?;
+        self.validate_size_limits()?;
         let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
 
         let manifest_bytes = self.manifest.to_toml_pretty()?;
@@ -67,6 +118,7 @@ impl BundleBuilder {
         let mut hash_manifest = HashManifest {
             files: BTreeMap::new(),
             manifest_hash: manifest_hash.clone(),
+            algorithm: "blake3".to_string(),
         };
         hash_manifest
             .files
@@ -83,14 +135,24 @@ impl BundleBuilder {
             .map_err(|err| CocoonError::Bundle(format!("json serialize: {err}")))?;
         append_file(&mut tar, HASH_MANIFEST_NAME, &hashes_json, 0o644)?;
 
-        let signature = SignatureMetadata {
-            algorithm: "none".into(),
-            public_key: None,
-            signature: "placeholder".into(),
-        };
-        let signature_json = serde_json::to_vec_pretty(&signature)
-            .map_err(|err| CocoonError::Bundle(format!("json serialize: {err}")))?;
-        append_file(&mut tar, SIGNATURE_NAME, &signature_json, 0o644)?;
+        #[cfg(not(feature = "require-signatures"))]
+        {
+            let signature = SignatureMetadata {
+                algorithm: "none".into(),
+                public_key: None,
+                signature: "placeholder".into(),
+            };
+            let signature_json = serde_json::to_vec_pretty(&signature)
+                .map_err(|err| CocoonError::Bundle(format!("json serialize: {err}")))?;
+            append_file(&mut tar, SIGNATURE_NAME, &signature_json, 0o644)?;
+        }
+
+        #[cfg(feature = "require-signatures")]
+        {
+            return Err(CocoonError::Bundle(
+                "signature production is not yet implemented; build without --features require-signatures".into(),
+            ));
+        }
 
         let encoder = tar.into_inner()?;
         Ok(encoder.finish()?)
@@ -98,10 +160,13 @@ impl BundleBuilder {
 
     fn collect_entries(&mut self) -> Result<()> {
         let mut seen = BTreeSet::new();
-        for entry in walkdir::WalkDir::new(&self.source_dir)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
+        for entry in walkdir::WalkDir::new(&self.source_dir).same_file_system(true) {
+            let entry = entry.map_err(|err| {
+                CocoonError::Bundle(format!(
+                    "cannot traverse source directory '{}': {err}",
+                    self.source_dir.display()
+                ))
+            })?;
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -129,6 +194,14 @@ impl BundleBuilder {
             let content = fs::read(&path)?;
             let hash = hash_bytes(&content);
             let mode = file_mode(&path)?;
+
+            // Reject symlinks in source to prevent packing unintended targets.
+            #[cfg(unix)]
+            if fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                return Err(CocoonError::Bundle(format!(
+                    "source path '{archive_path}' is a symbolic link and cannot be bundled"
+                )));
+            }
             self.entries.push(BundleEntry {
                 path,
                 archive_path,
@@ -164,6 +237,32 @@ impl BundleBuilder {
             )));
         }
 
+        Ok(())
+    }
+
+    fn validate_size_limits(&self) -> Result<()> {
+        if self.entries.len() > MAX_FILE_COUNT {
+            return Err(CocoonError::Bundle(format!(
+                "bundle contains {} files, exceeding maximum of {MAX_FILE_COUNT}",
+                self.entries.len()
+            )));
+        }
+        let mut total_size = 0u64;
+        for entry in &self.entries {
+            let size = entry.content.len() as u64;
+            if size > MAX_FILE_SIZE {
+                return Err(CocoonError::Bundle(format!(
+                    "file '{}' is {} bytes, exceeding maximum of {MAX_FILE_SIZE}",
+                    entry.archive_path, size
+                )));
+            }
+            total_size += size;
+        }
+        if total_size > MAX_BUNDLE_SIZE {
+            return Err(CocoonError::Bundle(format!(
+                "bundle uncompressed size is {total_size} bytes, exceeding maximum of {MAX_BUNDLE_SIZE}"
+            )));
+        }
         Ok(())
     }
 }
@@ -263,15 +362,22 @@ impl VerifiedBundle {
 
 impl BundleReader {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let decoder = GzDecoder::new(bytes);
-        let mut archive = tar::Archive::new(decoder);
+        let gz = GzDecoder::new(CountingReader::new(bytes, MAX_BUNDLE_SIZE + MAX_FILE_SIZE));
+        let mut archive = tar::Archive::new(gz);
         let mut entries = BTreeMap::new();
+        let mut total_size: u64 = 0;
 
         for entry in archive.entries()? {
             let mut entry = entry?;
             let entry_type = entry.header().entry_type();
             if entry_type.is_dir() {
                 continue;
+            }
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                return Err(CocoonError::Bundle(format!(
+                    "archive contains unsupported link entry '{}'",
+                    entry.path()?.display()
+                )));
             }
             if !entry_type.is_file() {
                 return Err(CocoonError::Bundle(format!(
@@ -293,6 +399,24 @@ impl BundleReader {
                     "cannot read archive mode for '{archive_path}': {err}"
                 ))
             })?;
+            let file_size = entry.size();
+            if file_size > MAX_FILE_SIZE {
+                return Err(CocoonError::Bundle(format!(
+                    "file '{}' is {file_size} bytes, exceeding maximum of {MAX_FILE_SIZE}",
+                    archive_path
+                )));
+            }
+            total_size += file_size;
+            if total_size > MAX_BUNDLE_SIZE {
+                return Err(CocoonError::Bundle(format!(
+                    "bundle uncompressed size exceeds maximum of {MAX_BUNDLE_SIZE}"
+                )));
+            }
+            if entries.len() >= MAX_FILE_COUNT {
+                return Err(CocoonError::Bundle(format!(
+                    "bundle file count exceeds maximum of {MAX_FILE_COUNT}"
+                )));
+            }
             entry.read_to_end(&mut content)?;
             entries.insert(archive_path, ArchiveEntry { content, mode });
         }
@@ -331,6 +455,7 @@ impl BundleReader {
 
     pub fn verify_with_policy(&self, policy: VerificationPolicy) -> Result<Vec<VerificationIssue>> {
         let mut issues = Vec::new();
+        self.verify_hash_algorithm(&mut issues);
         self.verify_payload_hashes(&mut issues);
         self.verify_manifest_hash(&mut issues)?;
         self.verify_entrypoint(&mut issues)?;
@@ -344,6 +469,10 @@ impl BundleReader {
             let destination = target_dir.join(archive_path);
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent)?;
+            }
+            #[cfg(unix)]
+            if destination.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+                fs::remove_file(&destination)?;
             }
             fs::write(&destination, &entry.content)?;
             set_file_mode(&destination, entry.mode)?;
@@ -378,6 +507,15 @@ impl BundleReader {
             if !self.entries.contains_key(path) {
                 issues.push(VerificationIssue::MissingFile(path.clone()));
             }
+        }
+    }
+
+    fn verify_hash_algorithm(&self, issues: &mut Vec<VerificationIssue>) {
+        let alg = &self.hash_manifest.algorithm;
+        if alg != "blake3" {
+            issues.push(VerificationIssue::UnsupportedHashAlgorithm {
+                algorithm: alg.clone(),
+            });
         }
     }
 
@@ -436,11 +574,27 @@ impl BundleReader {
     }
 
     fn verify_signature(&self, policy: VerificationPolicy, issues: &mut Vec<VerificationIssue>) {
-        if self.signature.algorithm == "none" {
-            if policy.require_signature {
+        #[cfg(feature = "require-signatures")]
+        {
+            if self.signature.algorithm == "none"
+                || self.signature.signature == "placeholder"
+            {
                 issues.push(VerificationIssue::SignatureRequired);
-            } else {
-                issues.push(VerificationIssue::Unsigned);
+                return;
+            }
+            // Real signature verification is a future milestone.
+            // Until implemented, any non-placeholder signature is accepted so
+            // that CI / test workflows can prepare bundles with real keys.
+        }
+
+        #[cfg(not(feature = "require-signatures"))]
+        {
+            if self.signature.algorithm == "none" {
+                if policy.require_signature {
+                    issues.push(VerificationIssue::SignatureRequired);
+                } else {
+                    issues.push(VerificationIssue::Unsigned);
+                }
             }
         }
     }
@@ -474,7 +628,8 @@ fn entry_content<'a>(
         .ok_or_else(|| CocoonError::Bundle(format!("missing {label}")))
 }
 
-fn archive_path_to_key(path: &Path) -> Result<String> {
+/// Normalizes a filesystem path into a bundle archive key.
+pub fn archive_path_to_key(path: &Path) -> Result<String> {
     let mut parts = Vec::new();
     for component in path.components() {
         match component {
@@ -505,6 +660,12 @@ fn archive_path_to_key(path: &Path) -> Result<String> {
     if parts.is_empty() {
         return Err(CocoonError::Bundle("archive path must not be empty".into()));
     }
+    if parts.len() > MAX_PATH_DEPTH {
+        return Err(CocoonError::Bundle(format!(
+            "archive path depth {} exceeds maximum of {MAX_PATH_DEPTH}",
+            parts.len()
+        )));
+    }
 
     Ok(parts.join("/"))
 }
@@ -521,8 +682,12 @@ fn file_mode(path: &Path) -> Result<u32> {
 }
 
 #[cfg(not(unix))]
-fn file_mode(_path: &Path) -> Result<u32> {
-    Ok(0o644)
+fn file_mode(path: &Path) -> Result<u32> {
+    let is_executable = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "exe" | "bat" | "cmd"));
+    Ok(if is_executable { 0o755 } else { 0o644 })
 }
 
 #[cfg(unix)]
@@ -558,6 +723,9 @@ pub enum VerificationIssue {
     },
     Unsigned,
     SignatureRequired,
+    UnsupportedHashAlgorithm {
+        algorithm: String,
+    },
 }
 
 impl VerificationIssue {
@@ -596,6 +764,9 @@ impl fmt::Display for VerificationIssue {
             ),
             Self::Unsigned => f.write_str("bundle is unsigned"),
             Self::SignatureRequired => f.write_str("bundle signature is required"),
+            Self::UnsupportedHashAlgorithm { algorithm } => {
+                write!(f, "unsupported hash algorithm '{algorithm}'")
+            }
         }
     }
 }

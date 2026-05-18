@@ -350,7 +350,7 @@ fn validate_identifier(raw: &str, label: &str) -> crate::Result<()> {
     let mut chars = raw.chars();
     let starts_valid = chars
         .next()
-        .is_some_and(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit());
+        .is_some_and(|ch| ch.is_ascii_lowercase());
     let body_valid = raw
         .chars()
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '-' | '_' | '.'));
@@ -360,7 +360,7 @@ fn validate_identifier(raw: &str, label: &str) -> crate::Result<()> {
     }
 
     Err(crate::CocoonError::InvalidManifest(format!(
-        "{label} must use lowercase ASCII letters, digits, '.', '_' or '-' and start with a letter or digit"
+        "{label} must use lowercase ASCII letters, digits, '.', '_' or '-' and start with a letter"
     )))
 }
 
@@ -390,9 +390,9 @@ fn validate_path_segments(raw: &str, label: &str) -> crate::Result<()> {
             "{label} must not contain control characters"
         )));
     }
-    if raw.split('/').any(|part| matches!(part, "." | "..")) {
+    if raw.contains("//") || raw.split('/').any(|part| matches!(part, "." | "..")) {
         return Err(crate::CocoonError::InvalidManifest(format!(
-            "{label} must not contain '.' or '..' segments"
+            "{label} must not contain empty, '.' or '..' segments"
         )));
     }
     Ok(())
@@ -412,11 +412,23 @@ fn validate_non_empty_text(raw: &str, label: &str) -> crate::Result<()> {
     Ok(())
 }
 
+fn normalize_path(path: &str) -> String {
+    // Remove trailing slashes except for root "/"
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn path_contains(root: &str, path: &str) -> bool {
+    let root = normalize_path(root);
+    let path = normalize_path(path);
     root == "/"
         || path == root
         || path
-            .strip_prefix(root)
+            .strip_prefix(&root)
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
 

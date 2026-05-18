@@ -601,7 +601,7 @@ visibility = "readwrite"
 "#,
         )
         .unwrap();
-        let diff = cocoon_core::diff_authority(&old, &new).unwrap();
+        let diff = cocoon_core::diff_authority(&old, &new);
 
         let report = format_authority_diff_report(&diff);
 

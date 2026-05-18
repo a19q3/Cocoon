@@ -11,6 +11,7 @@ pub struct PermissionDiff {
 }
 
 impl PermissionDiff {
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             added: Vec::new(),
@@ -19,6 +20,7 @@ impl PermissionDiff {
         }
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty() && self.modified.is_empty()
     }
@@ -32,6 +34,7 @@ pub struct RuleDiff<T> {
 }
 
 impl<T> RuleDiff<T> {
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             added: Vec::new(),
@@ -40,6 +43,7 @@ impl<T> RuleDiff<T> {
         }
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty() && self.modified.is_empty()
     }
@@ -54,6 +58,7 @@ pub struct AuthorityDiff {
 }
 
 impl AuthorityDiff {
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.permissions.is_empty()
             && self.schemes.is_empty()
@@ -65,7 +70,7 @@ impl AuthorityDiff {
 pub fn diff_permissions(
     old: &CapsuleManifest,
     new: &CapsuleManifest,
-) -> crate::Result<PermissionDiff> {
+) -> PermissionDiff {
     let old_permissions = sorted_allowed_permissions(old);
     let new_permissions = sorted_allowed_permissions(new);
     let mut added = Vec::new();
@@ -95,31 +100,31 @@ pub fn diff_permissions(
         }
     }
 
-    Ok(PermissionDiff {
+    PermissionDiff {
         added,
         removed,
         modified,
-    })
+    }
 }
 
 pub fn diff_capabilities(
     old: &CapsuleManifest,
     new: &CapsuleManifest,
-) -> crate::Result<PermissionDiff> {
+) -> PermissionDiff {
     diff_permissions(old, new)
 }
 
 pub fn diff_authority(
     old: &CapsuleManifest,
     new: &CapsuleManifest,
-) -> crate::Result<AuthorityDiff> {
-    Ok(AuthorityDiff {
-        permissions: diff_permissions(old, new)?,
+) -> AuthorityDiff {
+    AuthorityDiff {
+        permissions: diff_permissions(old, new),
         schemes: diff_rules(&old.schemes, &new.schemes, same_scheme_identity),
         preopens: diff_rules(&old.preopens, &new.preopens, same_preopen_identity),
         network_default: (old.network.default != new.network.default)
             .then_some((old.network.default, new.network.default)),
-    })
+    }
 }
 
 fn diff_rules<T>(old_rules: &[T], new_rules: &[T], same_identity: fn(&T, &T) -> bool) -> RuleDiff<T>
@@ -307,7 +312,10 @@ fn visibility_rank(visibility: SchemeVisibility) -> u8 {
 }
 
 fn sensitive_path(path: &str) -> bool {
-    path.contains("/etc/secrets") || path.contains("/home")
+    path.starts_with("/etc/secrets/")
+        || path == "/etc/secrets"
+        || path.starts_with("/home/")
+        || path == "/home"
 }
 
 #[cfg(test)]
@@ -327,7 +335,7 @@ cmd = "/app/bin/a"
 "#,
         )
         .unwrap();
-        let diff = diff_permissions(&manifest, &manifest).unwrap();
+        let diff = diff_permissions(&manifest, &manifest);
 
         assert!(diff.is_empty());
     }
@@ -371,7 +379,7 @@ target = "api.example.com:443"
 "#,
         )
         .unwrap();
-        let diff = diff_permissions(&old, &new).unwrap();
+        let diff = diff_permissions(&old, &new);
 
         assert_eq!(diff.added.len(), 1);
         assert_eq!(diff.added[0].scheme.as_str(), "tcp");
@@ -407,7 +415,7 @@ target = "*"
 "#,
         )
         .unwrap();
-        let diff = diff_permissions(&old, &new).unwrap();
+        let diff = diff_permissions(&old, &new);
 
         assert!(diff.is_empty());
     }
@@ -461,7 +469,7 @@ visibility = "readwrite"
         )
         .unwrap();
 
-        let diff = diff_authority(&old, &new).unwrap();
+        let diff = diff_authority(&old, &new);
 
         assert!(diff.permissions.is_empty());
         assert_eq!(diff.schemes.modified.len(), 1);
@@ -502,7 +510,7 @@ default = "allow"
         )
         .unwrap();
 
-        let diff = diff_authority(&old, &new).unwrap();
+        let diff = diff_authority(&old, &new);
 
         assert_eq!(
             diff.network_default,

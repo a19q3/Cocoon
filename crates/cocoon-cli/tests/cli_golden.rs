@@ -46,7 +46,7 @@ fn inspect_verify_and_strict_verify_outputs_are_stable() {
     );
     assert_eq!(
         stdout(verify).trim(),
-        "Bundle is unsigned (P0 signature placeholder)."
+        "Bundle is unsigned (P0 signature placeholder).\n\nVerification passed with warnings."
     );
 
     let strict_verify = cocoon()

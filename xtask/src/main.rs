@@ -40,7 +40,10 @@ fn main() -> anyhow::Result<()> {
         "host-smoke" => host_smoke(),
         "redox-target-smoke" => redox_target_smoke(),
         "redoxer-smoke" => redoxer_smoke(),
-        "qemu-smoke" => qemu_smoke(),
+        "qemu-smoke" => {
+            qemu_smoke();
+            Ok(())
+        }
         "redox-test" => {
             println!(
                 "Redox QEMU smoke test is not implemented yet. Use `cargo xtask redox-smoke` for the P1 scaffold."
@@ -67,7 +70,8 @@ fn main() -> anyhow::Result<()> {
 fn redox_smoke() -> anyhow::Result<()> {
     host_smoke()?;
     redox_target_smoke()?;
-    qemu_smoke()
+    qemu_smoke();
+    Ok(())
 }
 
 fn host_smoke() -> anyhow::Result<()> {
@@ -111,6 +115,7 @@ fn host_smoke() -> anyhow::Result<()> {
 
 fn redox_target_smoke() -> anyhow::Result<()> {
     print_section("Redox target smoke");
+    let mut any_todo = false;
 
     if run_optional(
         "cargo",
@@ -121,6 +126,7 @@ fn redox_target_smoke() -> anyhow::Result<()> {
         println!(
             "TODO redox link probe cargo check (install target with `rustup target add {REDOX_TARGET}`)"
         );
+        any_todo = true;
     }
 
     if run_optional(
@@ -132,6 +138,7 @@ fn redox_target_smoke() -> anyhow::Result<()> {
         println!(
             "TODO cocoon-cli redox cargo check (install target with `rustup target add {REDOX_TARGET}`)"
         );
+        any_todo = true;
     }
 
     if run_optional(
@@ -141,6 +148,7 @@ fn redox_target_smoke() -> anyhow::Result<()> {
         println!("PASS redox link probe binary link");
     } else {
         println!("TODO redox link probe binary link (requires Redox C sysroot/toolchain)");
+        any_todo = true;
     }
 
     if run_optional(
@@ -150,9 +158,14 @@ fn redox_target_smoke() -> anyhow::Result<()> {
         println!("PASS cocoon-cli redox binary link");
     } else {
         println!("TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)");
+        any_todo = true;
     }
 
     redoxer_smoke()?;
+
+    if any_todo {
+        anyhow::bail!("Some Redox target smoke checks were skipped. Install the Redox toolchain to run them.");
+    }
 
     Ok(())
 }
@@ -191,7 +204,7 @@ fn redoxer_smoke() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn qemu_smoke() -> anyhow::Result<()> {
+fn qemu_smoke() {
     print_section("QEMU smoke");
 
     println!("TODO boot redox qemu");
@@ -200,7 +213,6 @@ fn qemu_smoke() -> anyhow::Result<()> {
     println!("TODO install capsule inside redox");
     println!("TODO run hello-service inside redox");
     println!("TODO collect receipts/logs");
-    Ok(())
 }
 
 fn print_section(name: &str) {

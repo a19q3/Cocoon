@@ -15,5 +15,9 @@ flate2 = { workspace = true }
 thiserror = { workspace = true }
 walkdir = "2"
 
+[features]
+default = []
+require-signatures = []
+
 [dev-dependencies]
 tempfile = { workspace = true }

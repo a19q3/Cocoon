@@ -11,6 +11,8 @@ cocoon-core = { path = "../cocoon-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
+fs2 = "0.4"
 
 [dev-dependencies]
 tempfile = { workspace = true }

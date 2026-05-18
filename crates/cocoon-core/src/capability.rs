@@ -14,10 +14,12 @@ pub struct PermissionRule {
 }
 
 impl PermissionRule {
+    #[must_use]
     pub fn is_allow(&self) -> bool {
         self.effect == PermissionEffect::Allow
     }
 
+    #[must_use]
     pub fn normalized_key(&self) -> String {
         format!(
             "{}:{}:{}:{}",
