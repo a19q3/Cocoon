@@ -1,4 +1,6 @@
 /target
 /Cargo.lock
 *.cocoon
+/redox-*-evidence/
+/redox-*-evidence.tar.gz
 .DS_Store

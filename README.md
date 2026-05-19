@@ -229,6 +229,7 @@ structured result is now bound into the receipt body as explicit evidence.
 - [REDOX_TESTING.md](docs/REDOX_TESTING.md)
 - [reports/p1.2h-structured-child-result.md](docs/reports/p1.2h-structured-child-result.md)
 - [reports/p1.2i-review-hardening.md](docs/reports/p1.2i-review-hardening.md)
+- [reports/redox-upstream-review-ask.md](docs/reports/redox-upstream-review-ask.md)
 - [reports/p2a-pkgar-boundary.md](docs/reports/p2a-pkgar-boundary.md)
 
 ## License

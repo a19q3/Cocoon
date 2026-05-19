@@ -119,6 +119,9 @@ Cocoon writes receipts and logs that are checked through status/status
 
 ## Review Questions For Redox/Ibuki
 
+For the later upstream-facing draft, see
+[redox-upstream-review-ask.md](redox-upstream-review-ask.md).
+
 1. Is launching from an already-open executable FD with `fexecve` the intended
    Redox launcher contract for restricted service execution?
 2. For larger service profiles, should Cocoon keep using inherited FDs, move to
