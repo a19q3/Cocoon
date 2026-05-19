@@ -31,7 +31,7 @@ pub struct RunReceiptBody {
     pub command: String,
     pub args: Vec<String>,
     pub authority_enforced: bool,
-    pub authority_mode: String,
+    pub authority_mode: RunAuthorityMode,
     #[serde(default)]
     pub authority_enforced_for_service: bool,
     #[serde(default)]
@@ -67,6 +67,29 @@ pub struct RunReceiptBody {
     pub runtime_version: String,
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum RunAuthorityMode {
+    #[serde(rename = "smoke-unenforced")]
+    SmokeUnenforced,
+    #[serde(rename = "redox-enforced-capsule-entrypoint")]
+    RedoxEnforcedCapsuleEntrypoint,
+    #[serde(rename = "authority-unavailable")]
+    AuthorityUnavailable,
+    #[serde(rename = "redox-enforced")]
+    RedoxEnforced,
+}
+
+impl std::fmt::Display for RunAuthorityMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::SmokeUnenforced => "smoke-unenforced",
+            Self::RedoxEnforcedCapsuleEntrypoint => "redox-enforced-capsule-entrypoint",
+            Self::AuthorityUnavailable => "authority-unavailable",
+            Self::RedoxEnforced => "redox-enforced",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledVerification {
     pub capsule_name: String,
@@ -85,13 +108,13 @@ impl RunOptions {
         self.enforce_redox_authority
     }
 
-    fn authority_mode(self) -> &'static str {
+    fn authority_mode(self) -> RunAuthorityMode {
         if self.allow_unenforced_authority {
-            "smoke-unenforced"
+            RunAuthorityMode::SmokeUnenforced
         } else if self.enforce_redox_authority {
-            "redox-enforced-capsule-entrypoint"
+            RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint
         } else {
-            "redox-enforced"
+            RunAuthorityMode::AuthorityUnavailable
         }
     }
 }
@@ -231,7 +254,7 @@ pub fn run_installed_capsule_with_options_and_receipt_signing(
         command: manifest.entry.cmd.to_string(),
         args: manifest.entry.args.clone(),
         authority_enforced: options.authority_enforced(),
-        authority_mode: options.authority_mode().to_string(),
+        authority_mode: options.authority_mode(),
         authority_enforced_for_service: false,
         production_arbitrary_service: false,
         open_executable_before_restriction: false,
@@ -292,7 +315,7 @@ fn run_installed_capsule_with_redox_fd_backend(
         command: backend.command,
         args: backend.args,
         authority_enforced: true,
-        authority_mode: "redox-enforced-capsule-entrypoint".to_string(),
+        authority_mode: RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint,
         authority_enforced_for_service: backend.service_enforced,
         production_arbitrary_service: false,
         open_executable_before_restriction: backend.open_executable_before_restriction,
@@ -549,7 +572,14 @@ mod tests {
         assert_eq!(receipt.event, "capsule_run");
         assert_eq!(receipt.body.capsule_name, "run-test");
         assert!(!receipt.body.authority_enforced);
-        assert_eq!(receipt.body.authority_mode, "smoke-unenforced");
+        assert_eq!(
+            receipt.body.authority_mode,
+            RunAuthorityMode::SmokeUnenforced
+        );
+        assert_eq!(
+            serde_json::to_value(receipt.body.authority_mode).unwrap(),
+            "smoke-unenforced"
+        );
         assert_eq!(receipt.body.stdout_hash, hash_bytes(b"run-test-ok\n"));
         assert_eq!(receipt.body.stderr_hash, hash_bytes(b""));
         assert_eq!(receipt.body.exit_code, Some(0));
@@ -599,6 +629,32 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, RuntimeError::UnenforcedAuthority(_)));
+        assert_eq!(
+            RunOptions::default().authority_mode(),
+            RunAuthorityMode::AuthorityUnavailable
+        );
+    }
+
+    #[test]
+    fn run_authority_mode_serialized_strings_are_stable() {
+        for (mode, serialized) in [
+            (RunAuthorityMode::SmokeUnenforced, "\"smoke-unenforced\""),
+            (
+                RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint,
+                "\"redox-enforced-capsule-entrypoint\"",
+            ),
+            (
+                RunAuthorityMode::AuthorityUnavailable,
+                "\"authority-unavailable\"",
+            ),
+            (RunAuthorityMode::RedoxEnforced, "\"redox-enforced\""),
+        ] {
+            assert_eq!(serde_json::to_string(&mode).unwrap(), serialized);
+            assert_eq!(
+                serde_json::from_str::<RunAuthorityMode>(serialized).unwrap(),
+                mode
+            );
+        }
     }
 
     fn fixture_capsule() -> (TempDir, PathBuf) {

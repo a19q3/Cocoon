@@ -357,8 +357,8 @@ fn redox_target_smoke() -> anyhow::Result<()> {
         missing_target = true;
     }
 
-    println!("TODO redox link probe binary link (requires Redox C sysroot/toolchain)");
-    println!("TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)");
+    println!("BLOCKED redox link probe binary link (requires Redox C sysroot/toolchain)");
+    println!("BLOCKED cocoon-cli redox binary link (requires Redox C sysroot/toolchain)");
 
     if missing_target {
         anyhow::bail!(
@@ -381,16 +381,19 @@ fn redoxer_smoke() -> anyhow::Result<()> {
     }
 
     println!("PASS redoxer available");
+    let mut smoke_failed = false;
 
     if run_optional("redoxer", &["build", "-p", "redox-link-probe"])? {
         println!("PASS redoxer build redox-link-probe");
     } else {
+        smoke_failed = true;
         println!("TODO redoxer build redox-link-probe");
     }
 
     if run_optional("redoxer", &["build", "-p", "cocoon-cli"])? {
         println!("PASS redoxer build cocoon-cli");
     } else {
+        smoke_failed = true;
         println!("TODO redoxer build cocoon-cli");
     }
 
@@ -401,9 +404,13 @@ fn redoxer_smoke() -> anyhow::Result<()> {
     {
         println!("PASS redoxer run cocoon --help");
     } else {
+        smoke_failed = true;
         println!("TODO redoxer run cocoon --help");
     }
 
+    if smoke_failed {
+        anyhow::bail!("Redoxer smoke completed with TODO checks");
+    }
     Ok(())
 }
 
@@ -510,7 +517,7 @@ fn redox_package() -> anyhow::Result<()> {
             redox_binary_staged = true;
             println!("PASS package redoxer cocoon binary staged");
         } else {
-            println!("TODO package redoxer cocoon binary staged (binary path missing)");
+            println!("BLOCKED package redoxer cocoon binary staged (binary path missing)");
         }
     } else {
         println!("SKIP package redoxer cocoon binary staged (redoxer unavailable or build failed)");
@@ -933,9 +940,12 @@ fn qemu_smoke() -> anyhow::Result<()> {
         ],
     )?;
 
+    let mut qemu_failed = false;
+
     if verify.contains("## running redoxer ##") || plan.contains("## running redoxer ##") {
         println!("PASS boot redox qemu");
     } else {
+        qemu_failed = true;
         println!("TODO boot redox qemu");
     }
 
@@ -944,6 +954,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS run cocoon verify inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO run cocoon verify inside redox");
     }
 
@@ -953,6 +964,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS run cocoon plan inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO run cocoon plan inside redox");
     }
 
@@ -962,6 +974,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS report missing service status inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO report missing service status inside redox");
     }
 
@@ -971,6 +984,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject check-install before install inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject check-install before install inside redox");
     }
 
@@ -980,6 +994,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject run before install inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject run before install inside redox");
     }
 
@@ -995,6 +1010,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject locked capsule operations inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject locked capsule operations inside redox");
     }
 
@@ -1004,6 +1020,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS install capsule inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO install capsule inside redox");
     }
 
@@ -1014,6 +1031,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS report installed service status inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO report installed service status inside redox");
     }
 
@@ -1025,6 +1043,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS probe Redox authority inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO probe Redox authority inside redox");
     }
 
@@ -1037,6 +1056,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS classify Redox FD-only service launch gap inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO classify Redox FD-only service launch gap inside redox");
     }
 
@@ -1058,6 +1078,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     } else if fd_launch_blocked {
         println!("BLOCKED probe Redox FD-only controlled service launch inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO probe Redox FD-only controlled service launch inside redox");
     }
 
@@ -1082,6 +1103,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     } else if capsule_fd_launch_blocked {
         println!("BLOCKED probe Redox FD-only installed capsule entrypoint inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO probe Redox FD-only installed capsule entrypoint inside redox");
     }
 
@@ -1110,12 +1132,14 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS cocoon run uses FD-only capsule entrypoint backend inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO cocoon run uses FD-only capsule entrypoint backend inside redox");
     }
 
     if fd_run_profile_pass(&install_run, "log-service", "log-service") {
         println!("PASS P1.2g log-service FD run profile inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO P1.2g log-service FD run profile inside redox");
     }
 
@@ -1126,6 +1150,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     ) {
         println!("PASS P1.2g network-denied-service FD run profile inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO P1.2g network-denied-service FD run profile inside redox");
     }
 
@@ -1143,6 +1168,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("PASS audit Redox authority probe receipt inside redox");
         println!("PASS redox authority probe receipt audited");
     } else {
+        qemu_failed = true;
         println!("TODO audit Redox authority probe receipt inside redox");
     }
 
@@ -1155,6 +1181,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS audit Redox FD-only launch probe receipts inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO audit Redox FD-only launch probe receipts inside redox");
     }
 
@@ -1166,6 +1193,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS recover temporary install state inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO recover temporary install state inside redox");
     }
 
@@ -1175,6 +1203,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject duplicate install inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject duplicate install inside redox");
     }
 
@@ -1183,6 +1212,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject logs before run inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject logs before run inside redox");
     }
 
@@ -1192,6 +1222,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject tampered latest install receipt inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject tampered latest install receipt inside redox");
     }
 
@@ -1201,6 +1232,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject unenforced authority run inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject unenforced authority run inside redox");
     }
 
@@ -1214,6 +1246,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS run hello-service inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO run hello-service inside redox");
     }
 
@@ -1223,6 +1256,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS report upgraded service status inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO report upgraded service status inside redox");
     }
 
@@ -1233,6 +1267,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS roll back capsule inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO roll back capsule inside redox");
     }
 
@@ -1250,6 +1285,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS audit receipts inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO audit receipts inside redox");
     }
 
@@ -1259,6 +1295,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject current rollback version inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject current rollback version inside redox");
     }
 
@@ -1268,6 +1305,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject missing rollback version inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject missing rollback version inside redox");
     }
 
@@ -1278,6 +1316,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS reject tampered install inside redox");
     } else {
+        qemu_failed = true;
         println!("TODO reject tampered install inside redox");
     }
 
@@ -1299,7 +1338,11 @@ fn qemu_smoke() -> anyhow::Result<()> {
     {
         println!("PASS collect receipts/logs");
     } else {
+        qemu_failed = true;
         println!("TODO collect receipts/logs");
+    }
+    if qemu_failed {
+        anyhow::bail!("QEMU smoke completed with TODO checks");
     }
     Ok(())
 }

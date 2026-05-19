@@ -660,7 +660,7 @@ fn inspect_verify_and_strict_verify_outputs_are_stable() {
         std::fs::read(&latest_run_receipt).expect("latest run receipt can be read before tamper");
     let mut latest_only_receipt: cocoon_runtime::RunReceipt =
         serde_json::from_slice(&original_latest_run_receipt).expect("latest run receipt is json");
-    latest_only_receipt.body.authority_mode = "latest-only-tamper".to_string();
+    latest_only_receipt.body.authority_mode = cocoon_runtime::RunAuthorityMode::RedoxEnforced;
     latest_only_receipt.body_hash = cocoon_core::hash_bytes(
         &serde_json::to_vec(&latest_only_receipt.body)
             .expect("tampered latest-only run receipt body can be serialized"),

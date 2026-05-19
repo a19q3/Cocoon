@@ -314,7 +314,7 @@ pub fn audit_capsule_with_receipt_policy(
         });
         checks.push(AuditCheck {
             name: "latest authority probe mode".to_string(),
-            detail: receipt.body.mode.clone(),
+            detail: receipt.body.mode.to_string(),
         });
         if let Some(public_key) = signature_public_key(&receipt.signature) {
             checks.push(AuditCheck {
@@ -560,7 +560,7 @@ fn legacy_run_receipt_body_bytes(body: &crate::run::RunReceiptBody) -> Result<Op
         command: &'a str,
         args: &'a [String],
         authority_enforced: bool,
-        authority_mode: &'a str,
+        authority_mode: &'a crate::run::RunAuthorityMode,
         exit_code: Option<i32>,
         success: bool,
         stdout_log: &'a str,
@@ -592,7 +592,7 @@ fn legacy_run_receipt_body_bytes(body: &crate::run::RunReceiptBody) -> Result<Op
 }
 
 fn verify_run_fd_launch_evidence(receipt: &RunReceipt) -> Result<()> {
-    if receipt.body.authority_mode == "redox-enforced-capsule-entrypoint"
+    if receipt.body.authority_mode == crate::run::RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint
         && !receipt.body.authority_enforced_for_service
     {
         return Err(RuntimeError::ReceiptAudit(
@@ -609,7 +609,7 @@ fn verify_run_fd_launch_evidence(receipt: &RunReceipt) -> Result<()> {
     if !receipt.body.authority_enforced {
         missing.push("authority_enforced");
     }
-    if receipt.body.authority_mode != "redox-enforced-capsule-entrypoint" {
+    if receipt.body.authority_mode != crate::run::RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint {
         missing.push("authority_mode");
     }
     if receipt.body.production_arbitrary_service {
@@ -753,7 +753,7 @@ fn push_fd_launch_probe_audit_checks(
     });
     checks.push(AuditCheck {
         name: format!("latest {label} mode"),
-        detail: receipt.body.mode.clone(),
+        detail: receipt.body.mode.to_string(),
     });
     checks.push(AuditCheck {
         name: format!("latest {label} authority enforcement"),
@@ -1006,7 +1006,7 @@ mod tests {
             command: "/app/bin/status-test".to_string(),
             args: Vec::new(),
             authority_enforced: false,
-            authority_mode: "smoke-unenforced".to_string(),
+            authority_mode: crate::run::RunAuthorityMode::SmokeUnenforced,
             authority_enforced_for_service: false,
             production_arbitrary_service: false,
             open_executable_before_restriction: false,
@@ -1037,7 +1037,7 @@ mod tests {
             command: &'a str,
             args: &'a [String],
             authority_enforced: bool,
-            authority_mode: &'a str,
+            authority_mode: &'a crate::run::RunAuthorityMode,
             exit_code: Option<i32>,
             success: bool,
             stdout_log: &'a str,

@@ -1376,7 +1376,7 @@ fn fd_exec_probe_report_json(report: &cocoon_runtime::FdExecProbeReport) -> serd
     serde_json::json!({
         "capsule_name": report.capsule_name,
         "capsule_version": report.capsule_version,
-        "mode": report.mode,
+        "mode": &report.mode,
         "attempted_executable": report.attempted_executable,
         "expected_path_exec_failure": report.expected_path_exec_failure,
         "classified_fd_exec_blocker": report.classified_fd_exec_blocker,
@@ -2219,7 +2219,7 @@ mod tests {
                 command: "/app/bin/hello-service".to_string(),
                 args: Vec::new(),
                 authority_enforced: false,
-                authority_mode: "smoke-unenforced".to_string(),
+                authority_mode: cocoon_runtime::RunAuthorityMode::SmokeUnenforced,
                 authority_enforced_for_service: false,
                 production_arbitrary_service: false,
                 open_executable_before_restriction: false,
@@ -2288,7 +2288,7 @@ mod tests {
                 command: "/app/bin/hello-service".to_string(),
                 args: Vec::new(),
                 authority_enforced: false,
-                authority_mode: "smoke-unenforced".to_string(),
+                authority_mode: cocoon_runtime::RunAuthorityMode::SmokeUnenforced,
                 authority_enforced_for_service: false,
                 production_arbitrary_service: false,
                 open_executable_before_restriction: false,
@@ -2350,7 +2350,7 @@ mod tests {
             body: cocoon_runtime::AuthorityProbeReceiptBody {
                 capsule_name: "hello-service".to_string(),
                 capsule_version: "0.1.0".to_string(),
-                mode: "redox-child-null-namespace".to_string(),
+                mode: cocoon_runtime::AuthorityProbeMode::RedoxChildNullNamespace,
                 child_exit_code: Some(0),
                 success: true,
                 entered_restricted_namespace: true,
@@ -2389,7 +2389,7 @@ mod tests {
         let output = format_fd_exec_probe_report(&cocoon_runtime::FdExecProbeReport {
             capsule_name: "hello-service".to_string(),
             capsule_version: "0.1.0".to_string(),
-            mode: "redox-null-namespace-path-exec-classification".to_string(),
+            mode: cocoon_runtime::FdExecProbeMode::RedoxNullNamespacePathExecClassification,
             attempted_executable: "target/x86_64-unknown-redox/debug/cocoon".to_string(),
             expected_path_exec_failure: true,
             classified_fd_exec_blocker: true,
@@ -2413,7 +2413,7 @@ mod tests {
                 body: cocoon_runtime::FdLaunchProbeReceiptBody {
                     capsule_name: "hello-service".to_string(),
                     capsule_version: "0.1.0".to_string(),
-                    mode: "redox-controlled-service-enforced".to_string(),
+                    mode: cocoon_runtime::FdLaunchMode::RedoxControlledServiceEnforced,
                     authority_enforced_for_service: true,
                     production_arbitrary_service: false,
                     child_exit_code: Some(0),
@@ -2464,7 +2464,7 @@ mod tests {
                     body: cocoon_runtime::FdLaunchProbeReceiptBody {
                         capsule_name: "hello-service".to_string(),
                         capsule_version: "0.1.0".to_string(),
-                        mode: "redox-enforced-capsule-entrypoint".to_string(),
+                        mode: cocoon_runtime::FdLaunchMode::RedoxEnforcedCapsuleEntrypoint,
                         authority_enforced_for_service: true,
                         production_arbitrary_service: false,
                         child_exit_code: Some(0),

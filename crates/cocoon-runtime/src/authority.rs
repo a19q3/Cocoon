@@ -39,7 +39,7 @@ pub struct AuthorityProbeReceipt {
 pub struct AuthorityProbeReceiptBody {
     pub capsule_name: String,
     pub capsule_version: String,
-    pub mode: String,
+    pub mode: AuthorityProbeMode,
     pub child_exit_code: Option<i32>,
     pub success: bool,
     pub entered_restricted_namespace: bool,
@@ -56,6 +56,20 @@ pub struct AuthorityProbeReceiptBody {
     pub started_at: String,
     pub finished_at: String,
     pub runtime_version: String,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum AuthorityProbeMode {
+    #[serde(rename = "redox-child-null-namespace")]
+    RedoxChildNullNamespace,
+}
+
+impl std::fmt::Display for AuthorityProbeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::RedoxChildNullNamespace => "redox-child-null-namespace",
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,11 +94,27 @@ pub struct AuthorityProbeChildReport {
 pub struct FdExecProbeReport {
     pub capsule_name: String,
     pub capsule_version: String,
-    pub mode: String,
+    pub mode: FdExecProbeMode,
     pub attempted_executable: String,
     pub expected_path_exec_failure: bool,
     pub classified_fd_exec_blocker: bool,
     pub failure_message: String,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum FdExecProbeMode {
+    #[serde(rename = "redox-null-namespace-path-exec-classification")]
+    RedoxNullNamespacePathExecClassification,
+}
+
+impl std::fmt::Display for FdExecProbeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::RedoxNullNamespacePathExecClassification => {
+                "redox-null-namespace-path-exec-classification"
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -100,7 +130,7 @@ pub struct FdLaunchProbeReceipt {
 pub struct FdLaunchProbeReceiptBody {
     pub capsule_name: String,
     pub capsule_version: String,
-    pub mode: String,
+    pub mode: FdLaunchMode,
     pub authority_enforced_for_service: bool,
     pub production_arbitrary_service: bool,
     pub child_exit_code: Option<i32>,
@@ -123,6 +153,29 @@ pub struct FdLaunchProbeReceiptBody {
     pub started_at: String,
     pub finished_at: String,
     pub runtime_version: String,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum FdLaunchMode {
+    #[serde(rename = "redox-controlled-service-enforced")]
+    RedoxControlledServiceEnforced,
+    #[serde(rename = "redox-fd-launch-blocked")]
+    RedoxFdLaunchBlocked,
+    #[serde(rename = "redox-enforced-capsule-entrypoint")]
+    RedoxEnforcedCapsuleEntrypoint,
+    #[serde(rename = "redox-capsule-fd-launch-blocked")]
+    RedoxCapsuleFdLaunchBlocked,
+}
+
+impl std::fmt::Display for FdLaunchMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::RedoxControlledServiceEnforced => "redox-controlled-service-enforced",
+            Self::RedoxFdLaunchBlocked => "redox-fd-launch-blocked",
+            Self::RedoxEnforcedCapsuleEntrypoint => "redox-enforced-capsule-entrypoint",
+            Self::RedoxCapsuleFdLaunchBlocked => "redox-capsule-fd-launch-blocked",
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -423,7 +476,7 @@ fn probe_installed_authority_impl(
     let body = AuthorityProbeReceiptBody {
         capsule_name: manifest.capsule.name.to_string(),
         capsule_version: manifest.capsule.version.to_string(),
-        mode: "redox-child-null-namespace".to_string(),
+        mode: AuthorityProbeMode::RedoxChildNullNamespace,
         child_exit_code: output.status.code(),
         success,
         entered_restricted_namespace,
@@ -533,11 +586,10 @@ fn probe_fd_launch_impl(
     }
 
     let mode = if service_enforced {
-        "redox-controlled-service-enforced"
+        FdLaunchMode::RedoxControlledServiceEnforced
     } else {
-        "redox-fd-launch-blocked"
-    }
-    .to_string();
+        FdLaunchMode::RedoxFdLaunchBlocked
+    };
     let failure_message = if service_enforced {
         String::new()
     } else {
@@ -595,11 +647,10 @@ fn probe_capsule_fd_launch_impl(
     let receipt_id = backend.receipt_id.clone();
 
     let mode = if backend.service_enforced {
-        "redox-enforced-capsule-entrypoint"
+        FdLaunchMode::RedoxEnforcedCapsuleEntrypoint
     } else {
-        "redox-capsule-fd-launch-blocked"
-    }
-    .to_string();
+        FdLaunchMode::RedoxCapsuleFdLaunchBlocked
+    };
     let body = FdLaunchProbeReceiptBody {
         capsule_name: backend.capsule_name,
         capsule_version: backend.capsule_version,
@@ -886,7 +937,7 @@ fn probe_fd_exec_gap_impl(
         Err(error) => Ok(FdExecProbeReport {
             capsule_name: manifest.capsule.name.to_string(),
             capsule_version: manifest.capsule.version.to_string(),
-            mode: "redox-null-namespace-path-exec-classification".to_string(),
+            mode: FdExecProbeMode::RedoxNullNamespacePathExecClassification,
             attempted_executable: current_exe,
             expected_path_exec_failure: true,
             classified_fd_exec_blocker: true,
@@ -1535,7 +1586,7 @@ mod tests {
         let body = AuthorityProbeReceiptBody {
             capsule_name: "hello-service".to_string(),
             capsule_version: "0.1.0".to_string(),
-            mode: "redox-child-null-namespace".to_string(),
+            mode: AuthorityProbeMode::RedoxChildNullNamespace,
             child_exit_code: Some(0),
             success: true,
             entered_restricted_namespace: true,
@@ -1557,6 +1608,10 @@ mod tests {
         let hash = hash_bytes(&canonical_authority_probe_receipt_body_bytes(&body).unwrap());
 
         assert!(hash.starts_with("blake3:"));
+        assert_eq!(
+            serde_json::to_value(body.mode).unwrap(),
+            "redox-child-null-namespace"
+        );
     }
 
     #[test]
@@ -1564,7 +1619,7 @@ mod tests {
         let body = FdLaunchProbeReceiptBody {
             capsule_name: "hello-service".to_string(),
             capsule_version: "0.1.0".to_string(),
-            mode: "redox-controlled-service-enforced".to_string(),
+            mode: FdLaunchMode::RedoxControlledServiceEnforced,
             authority_enforced_for_service: true,
             production_arbitrary_service: false,
             child_exit_code: Some(0),
@@ -1592,5 +1647,47 @@ mod tests {
         let hash = hash_bytes(&canonical_fd_launch_probe_receipt_body_bytes(&body).unwrap());
 
         assert!(hash.starts_with("blake3:"));
+        assert_eq!(
+            serde_json::to_value(body.mode).unwrap(),
+            "redox-controlled-service-enforced"
+        );
+    }
+
+    #[test]
+    fn probe_mode_serialized_strings_are_stable() {
+        assert_eq!(
+            serde_json::to_string(&AuthorityProbeMode::RedoxChildNullNamespace).unwrap(),
+            "\"redox-child-null-namespace\""
+        );
+        assert_eq!(
+            serde_json::to_string(&FdExecProbeMode::RedoxNullNamespacePathExecClassification)
+                .unwrap(),
+            "\"redox-null-namespace-path-exec-classification\""
+        );
+
+        for (mode, serialized) in [
+            (
+                FdLaunchMode::RedoxControlledServiceEnforced,
+                "\"redox-controlled-service-enforced\"",
+            ),
+            (
+                FdLaunchMode::RedoxFdLaunchBlocked,
+                "\"redox-fd-launch-blocked\"",
+            ),
+            (
+                FdLaunchMode::RedoxEnforcedCapsuleEntrypoint,
+                "\"redox-enforced-capsule-entrypoint\"",
+            ),
+            (
+                FdLaunchMode::RedoxCapsuleFdLaunchBlocked,
+                "\"redox-capsule-fd-launch-blocked\"",
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&mode).unwrap(), serialized);
+            assert_eq!(
+                serde_json::from_str::<FdLaunchMode>(serialized).unwrap(),
+                mode
+            );
+        }
     }
 }

@@ -213,12 +213,7 @@ pub fn severity_for_permission(permission: &PermissionRule) -> Severity {
         "device" | "kernel" | "sudo" | "sys" => Severity::Critical,
         "tcp" | "udp" | "network" => Severity::High,
         "proc" | "memory" => Severity::High,
-        "file"
-            if permission.target.as_str().contains("/etc/secrets")
-                || permission.target.as_str().contains("/home") =>
-        {
-            Severity::High
-        }
+        "file" if sensitive_permission_target(permission.target.as_str()) => Severity::High,
         "file" => Severity::Medium,
         _ => Severity::Low,
     }
@@ -307,6 +302,11 @@ fn sensitive_path(path: &str) -> bool {
         || path == "/etc/secrets"
         || path.starts_with("/home/")
         || path == "/home"
+}
+
+fn sensitive_permission_target(target: &str) -> bool {
+    let path = target.trim_end_matches('*').trim_end_matches('/');
+    sensitive_path(path)
 }
 
 #[cfg(test)]
@@ -428,6 +428,38 @@ target = "*"
     }
 
     #[test]
+    fn file_permission_severity_uses_path_boundaries() {
+        for target in [
+            "/home",
+            "/home/",
+            "/home/alice",
+            "/home/**",
+            "/etc/secrets",
+            "/etc/secrets/",
+            "/etc/secrets/token",
+        ] {
+            assert_eq!(
+                severity_for_permission(&file_read_permission(target)),
+                Severity::High,
+                "{target}"
+            );
+        }
+
+        for target in [
+            "/app/homepage",
+            "/app/foo/home",
+            "/etc/secrets_backup",
+            "/var/etc/secrets",
+        ] {
+            assert_eq!(
+                severity_for_permission(&file_read_permission(target)),
+                Severity::Medium,
+                "{target}"
+            );
+        }
+    }
+
+    #[test]
     fn authority_diff_tracks_scheme_visibility() {
         let old = CapsuleManifest::from_toml(
             r#"
@@ -468,6 +500,15 @@ visibility = "readwrite"
             diff.schemes.modified[0].0.visibility,
             diff.schemes.modified[0].1.visibility
         ));
+    }
+
+    fn file_read_permission(target: &str) -> PermissionRule {
+        PermissionRule {
+            effect: crate::PermissionEffect::Allow,
+            scheme: crate::SchemeName::parse("file").unwrap(),
+            action: PermissionAction::Read,
+            target: crate::PermissionTarget::parse(target).unwrap(),
+        }
     }
 
     #[test]
