@@ -1,6 +1,6 @@
 # Cocoon Production Readiness Tracker
 
-Last updated: 2026-05-18
+Last updated: 2026-05-19
 
 ## Current Verdict
 
@@ -48,7 +48,7 @@ production-readiness item by themselves.
 | Redox authority enforcement | PARTIAL | `cocoon run` constructs a Redox namespace, passes preopened handles, and proves denied scheme/path access fails. | P1.2a/P1.2b `probe-authority` validates Redox null namespace behavior through a restricted child process and audited receipt; P1.2c `probe-fd-exec` classifies the path-exec blocker; P1.2d `probe-fd-launch` launches a controlled fixture from an inherited executable FD; P1.2e `probe-capsule-fd-launch` launches an installed capsule entrypoint from its payload FD under a manifest-derived restricted namespace; P1.2f adds explicit `cocoon run --enforce-redox-authority` over the same backend; P1.2g runs additional log and network-denied service profiles through the same backend. Default `run` still fails closed unless `--allow-unenforced-authority` or the explicit Redox FD backend flag is used. | Review the operational boundary, then decide when to enable default Redox enforcement and promote the production label from `redox-enforced-capsule-entrypoint` to `redox-enforced`. |
 | P1.2a null namespace/preopen probe | DONE | Redox/QEMU probe enters a restricted namespace, reads an already-open allowed file preopen, and rejects denied path/scheme opens. | `cargo xtask qemu-smoke` includes `PASS probe Redox authority inside redox`. | Keep as regression evidence for full P1.2 service execution. |
 | P1.2b restricted child runner | DONE | Cocoon spawns a child process that enters the Redox null namespace, proves allowed preopen and denied path/scheme behavior, writes an authority probe receipt, and audits it. | `cargo xtask qemu-smoke` includes `PASS redox authority probe receipt audited`. | Use this child-runner path as the base for FD-only service execution. |
-| P1.2c FD-only exec gap classification | DONE | Redox/QEMU proves that entering the null namespace before a normal path-based `exec` blocks launching by name, so production execution needs an FD-only loader/exec strategy. | `cargo xtask qemu-smoke` includes `PASS classify Redox FD-only service launch gap inside redox`. | Replace classification with actual FD-only service launch when the loader path is implemented. |
+| P1.2c FD-only exec gap classification | DONE | Redox/QEMU proves that entering the null namespace before a normal path-based `exec` blocks launching by name, so production execution needs an FD-only loader/exec strategy. | `cargo xtask qemu-smoke` includes `PASS classify Redox FD-only service launch gap inside redox`. | Keep as regression evidence explaining why the P1.2f/P1.2g FD-only backend exists. |
 | P1.2d controlled FD-only launch spike | DONE | Redox/QEMU launches a controlled fixture from an inherited executable FD under a restricted namespace with required runtime schemes. | `cocoon probe-fd-launch` writes an `fd_launch_probe` receipt and QEMU smoke includes `PASS probe Redox FD-only controlled service launch inside redox`; `audit` verifies the receipt body, archive link, and stdout/stderr hashes. | Keep as mechanism regression evidence below installed-entrypoint execution. |
 | P1.2e installed capsule entrypoint FD launch spike | DONE | Redox/QEMU opens the installed capsule entrypoint before restriction, enters a manifest-derived restricted namespace, fexecs the entrypoint FD, and proves declared resource access plus denied path/scheme rejection. | `cocoon probe-capsule-fd-launch` writes a `capsule_fd_launch_probe` receipt with `authority_mode = redox-enforced-capsule-entrypoint`; QEMU smoke includes `PASS probe Redox FD-only installed capsule entrypoint inside redox` and `PASS audit Redox FD-only launch probe receipts inside redox`. | Keep as probe evidence below the run backend. |
 | P1.2f explicit Redox FD run backend | DONE | `cocoon run --enforce-redox-authority` uses the same FD-only installed capsule entrypoint backend as the probe, writes a normal `capsule_run` receipt, exposes status/logs/audit readback, and keeps `production_arbitrary_service = false`. | QEMU smoke includes `PASS cocoon run uses FD-only capsule entrypoint backend inside redox`; run receipts expose executable/preopen-before-restriction fields, manifest-derived namespace evidence, fexec success, declared resource read, denied path rejection, hidden scheme rejection, stdout/stderr hashes, and `authority_mode = redox-enforced-capsule-entrypoint`. | Keep as regression evidence below final production label promotion. |
@@ -59,11 +59,11 @@ production-readiness item by themselves.
 | Policy upgrade review | PARTIAL | Upgrades show stable permission diffs and require explicit approval for dangerous expansions. | `plan` and verifier expose normalized authority; install itself does not enforce approval policy. | Add install/upgrade preflight gate for permission expansion. |
 | Machine-readable CLI contract | DONE | Core commands support stable JSON output and documented exit codes for automation. | `plan`, `install`, `run`, `probe-authority`, `probe-fd-exec`, `probe-fd-launch`, `probe-capsule-fd-launch`, `status`, `logs`, `check-install`, `rollback`, `recover`, and `audit` support `--json`; CLI golden parses JSON for `plan`, `run`, `status`, `logs`, and `audit`; `docs/CLI_CONTRACT.md` documents output and exit-code semantics. | Keep JSON fixtures stable as commands evolve. |
 | CI production gate | TODO | CI runs host gate on every change and optional Redoxer/QEMU gate on capable runners. | Local `cargo xtask test` and `cargo xtask redox-smoke` pass. | Add CI jobs with Redoxer/QEMU lane marked required where infrastructure supports it. |
-| Payload packaging alignment | TODO | Payload layer converges on `pkgar` while `.cocoon` remains policy/receipt envelope. | Current payload format remains development fixture-oriented. | Prototype pkgar-backed capsule payload and verifier integration. |
+| Payload packaging alignment | PARTIAL | Payload layer converges on `pkgar` while `.cocoon` remains policy/receipt envelope. | Current payload format remains development fixture-oriented; P2a boundary report defines `pkg/pkgar` as payload owner and Cocoon as authority/audit envelope owner without changing runtime code. | Prototype pkgar-backed capsule payload only after the boundary can be preserved without disturbing P1.2g authority evidence. |
 
 ## Current CLI Evidence
 
-Latest local evidence on 2026-05-18:
+Latest local evidence on 2026-05-19:
 
 ```text
 cargo fmt --all --check: PASS
@@ -90,6 +90,7 @@ legacy pre-P1.2f run receipt hash compatibility: PASS
 deterministic signed bundle signature tamper test: PASS
 P1.2g multi-profile FD run backend QEMU coverage: PASS
 Redox authority community review package: docs/reports/redox-community-review-package.md
+P2a pkgar boundary report: docs/reports/p2a-pkgar-boundary.md
 ```
 
 `cargo xtask redox-smoke` currently reports these direct target blockers without
@@ -108,8 +109,9 @@ remain production blockers for a native Redox distribution path.
 1. P1.2 service execution enforcement:
    - keep the P1.2g Redox FD-only run backend as the reviewable evidence
      baseline;
-   - ask Redox/Ibuki to review whether `fexecve` from an already-open
-     executable FD is the intended service launcher contract;
+   - prepare, but do not yet send, the Redox/Ibuki review question about
+     whether `fexecve` from an already-open executable FD is the intended
+     service launcher contract;
    - decide when Redox `cocoon run` should default to the FD backend instead of
      requiring `--enforce-redox-authority`;
    - keep final `authority_mode = redox-enforced` blocked until the reviewed

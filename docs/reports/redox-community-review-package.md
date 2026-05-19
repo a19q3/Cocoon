@@ -1,6 +1,6 @@
 # Redox Authority Community Review Package
 
-Last updated: 2026-05-18
+Last updated: 2026-05-19
 
 ## Executive Summary
 
@@ -84,6 +84,13 @@ failures of the QEMU authority runtime path. Redoxer/QEMU tasks should be run
 serially because concurrent invocations can contend for Redoxer temporary disk
 state.
 
+The current P1.2 authority proof uses stdout markers from controlled children
+and services as one part of the evidence. The harness also requires successful
+child/command exit status, and Cocoon writes receipts and logs that are checked
+through status/log/audit readback. Marker parsing is not treated as a standalone
+trust boundary; a structured child result bound into the receipt body is future
+hardening.
+
 ## What Cocoon Does Not Claim Yet
 
 - Final production `authority_mode = redox-enforced`.
@@ -135,8 +142,9 @@ rollback metadata, and audit readback.
 ## Next Cocoon Steps
 
 1. Keep P1.2g as the reviewable evidence baseline.
-2. Send this report and the P1.2d/P1.2e/P1.2f/P1.2g reports for Redox/Ibuki
-   review.
+2. Keep this report and the P1.2d/P1.2e/P1.2f/P1.2g reports ready for later
+   Redox/Ibuki review, but avoid deepening unconfirmed launcher assumptions in
+   the meantime.
 3. Add more service profiles only after the launcher boundary is accepted or
    corrected.
 4. Decide whether Redox should enable the FD backend by default for `cocoon run`.

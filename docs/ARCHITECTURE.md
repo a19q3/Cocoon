@@ -94,8 +94,8 @@ packages.
 | `cocoon-bundle` | P0 `.cocoon` archive creation, parsing, path safety, hash verification |
 | `cocoon-policy` | Permission diff severity and confirmation policy |
 | `cocoon-cli` | Developer entrypoint: `build`, `verify`, `inspect`, `plan`, `install`, `check-install`, `recover`, `audit`, `run`, `status`, `logs`, `diff-permissions` |
-| `cocoon-runtime` | Verified staged install, receipts, future Redox namespace/spawn runtime |
-| `cocoon-testkit` | Fixture helpers and future QEMU integration harness |
+| `cocoon-runtime` | Verified staged install, receipts, status/log/audit, and Redox authority evidence including the FD-only launch backend |
+| `cocoon-testkit` | Experimental fixture helpers; currently inactive for Redox/QEMU acceptance, which is driven by `xtask` |
 
 ## Security Model
 

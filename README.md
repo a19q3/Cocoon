@@ -171,11 +171,12 @@ Permissions:
   deny device manage /**
 ```
 
-This is the bridge from P0 capsule intent to future P1 Redox/QEMU execution.
+This is the bridge from capsule intent to the current Redox/QEMU authority
+evidence path.
 
-## Redox Smoke Scaffold
+## Redox Smoke
 
-Prepare the early P1 smoke artifacts:
+Prepare and run the Redox smoke artifacts:
 
 ```bash
 cargo xtask redox-smoke
@@ -205,10 +206,17 @@ fail required gates until implemented.
 
 ## Status
 
-P0 defines and verifies capsule intent. It does not yet enforce Redox runtime
-isolation. Runtime isolation claims start in P1 with Redox/QEMU evidence:
-constructed namespaces, visible schemes, preopened handles, service spawn, log
-capture, receipts, and denied-access checks.
+P0 defines and verifies capsule intent. P1.2 now has Redox/QEMU authority
+evidence through `probe-authority`, FD-only launch probes, and
+`cocoon run --enforce-redox-authority`. The current enforced run label remains
+`redox-enforced-capsule-entrypoint`, not the final production
+`redox-enforced`, until the Redox launcher boundary, broader service profiles,
+native packaging path, and service lifecycle semantics are reviewed.
+
+Current authority proof still uses stdout markers from controlled children and
+services together with child exit status, run/probe receipts, log hashes, and
+`cocoon audit` verification. Replacing marker parsing with a structured child
+result bound into the receipt body is a future hardening item.
 
 ## Docs
 
@@ -219,6 +227,7 @@ capture, receipts, and denied-access checks.
 - [CODING_STYLE.md](docs/CODING_STYLE.md)
 - [MACOS_DEV.md](docs/MACOS_DEV.md)
 - [REDOX_TESTING.md](docs/REDOX_TESTING.md)
+- [reports/p2a-pkgar-boundary.md](docs/reports/p2a-pkgar-boundary.md)
 
 ## License
 
