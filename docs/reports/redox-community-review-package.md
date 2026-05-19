@@ -97,6 +97,12 @@ failures of the QEMU authority runtime path. Redoxer/QEMU tasks should be run
 serially because concurrent invocations can contend for Redoxer temporary disk
 state.
 
+Some Redoxer wrapper versions can return a non-zero wrapper status even when the
+transcript reports `qemu exit status 0` and the guest command output is
+complete. The QEMU harness treats that case as `WARN` for `redoxer exec`, then
+continues to require the normal PASS/audit markers. Missing guest evidence still
+fails the smoke.
+
 The current P1.2 authority proof keeps stdout markers from controlled children
 and services as human-readable log evidence. P1.2h adds structured child results
 that are parsed by the parent and bound into run/probe receipt bodies. P1.2i

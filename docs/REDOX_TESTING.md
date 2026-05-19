@@ -103,6 +103,12 @@ structured JSON, stdout-only PASS markers, missing launcher results, missing
 service-or-blocked results, and mismatched authority result kinds are not
 accepted as enforced evidence.
 
+Some Redoxer versions can return a non-zero wrapper status while the transcript
+reports `qemu exit status 0` and the guest command output is complete. The QEMU
+harness reports this as `WARN` for `redoxer exec` and still requires the normal
+PASS/audit markers before accepting the smoke. Non-zero guest evidence or
+missing authority markers still fail the gate.
+
 For the current Redox authority evidence chain and upstream review boundary,
 see [reports/redox-community-review-package.md](reports/redox-community-review-package.md).
 

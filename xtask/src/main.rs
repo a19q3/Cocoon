@@ -1465,6 +1465,13 @@ fn run_optional_capture(program: &str, args: &[&str]) -> anyhow::Result<Captured
 fn run_required_capture(program: &str, args: &[&str]) -> anyhow::Result<String> {
     let captured = run_optional_capture(program, args)?;
     if !captured.status.success() {
+        if is_redoxer_qemu_exit_zero_wrapper_failure(program, args, &captured.combined) {
+            println!(
+                "WARN redoxer wrapper returned non-zero after qemu exit 0: {}",
+                command_display(program, args)
+            );
+            return Ok(captured.combined);
+        }
         anyhow::bail!(
             "command failed with status {}: {}\n{}",
             captured.status,
@@ -1473,6 +1480,12 @@ fn run_required_capture(program: &str, args: &[&str]) -> anyhow::Result<String> 
         );
     }
     Ok(captured.combined)
+}
+
+fn is_redoxer_qemu_exit_zero_wrapper_failure(program: &str, args: &[&str], combined: &str) -> bool {
+    program == "redoxer"
+        && args.first() == Some(&"exec")
+        && combined.contains("## redoxer (failure, qemu exit status exit status: 0) ##")
 }
 
 fn command_display(program: &str, args: &[&str]) -> String {
@@ -1572,5 +1585,37 @@ fn program_available(program: &str) -> anyhow::Result<bool> {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_redoxer_qemu_exit_zero_wrapper_failure;
+
+    #[test]
+    fn detects_redoxer_qemu_exit_zero_wrapper_false_negative() {
+        let transcript = "command output\n## redoxer (failure, qemu exit status exit status: 0) ##";
+
+        assert!(is_redoxer_qemu_exit_zero_wrapper_failure(
+            "redoxer",
+            &["exec", "--folder", "root:/root"],
+            transcript
+        ));
+    }
+
+    #[test]
+    fn wrapper_false_negative_detection_requires_redoxer_exec() {
+        let transcript = "## redoxer (failure, qemu exit status exit status: 0) ##";
+
+        assert!(!is_redoxer_qemu_exit_zero_wrapper_failure(
+            "redoxer",
+            &["build", "-p", "cocoon-cli"],
+            transcript
+        ));
+        assert!(!is_redoxer_qemu_exit_zero_wrapper_failure(
+            "cargo",
+            &["test"],
+            transcript
+        ));
     }
 }
