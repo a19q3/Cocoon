@@ -1693,6 +1693,9 @@ fn format_run_receipt(receipt: &cocoon_runtime::RunReceipt) -> String {
         "Production arbitrary service: {}",
         receipt.body.production_arbitrary_service
     ));
+    if receipt.body.structured_child_result {
+        lines.push("PASS run parsed structured child result".to_string());
+    }
     if receipt.body.open_executable_before_restriction {
         lines.push("PASS run opened executable before restriction".to_string());
     }
@@ -1795,6 +1798,10 @@ fn format_status_report(status: &cocoon_runtime::ServiceStatusReport) -> String 
                 "Latest run authority enforced for service: {}",
                 receipt.body.authority_enforced_for_service
             ));
+            lines.push(format!(
+                "Latest run structured child result: {}",
+                receipt.body.structured_child_result
+            ));
         }
         lines.push(format!("Latest run stdout: {}", receipt.body.stdout_log));
         lines.push(format!(
@@ -1823,6 +1830,10 @@ fn format_status_report(status: &cocoon_runtime::ServiceStatusReport) -> String 
             "Latest authority probe success: {}",
             receipt.body.success
         ));
+        lines.push(format!(
+            "Latest authority probe structured child result: {}",
+            receipt.body.structured_child_result
+        ));
     } else {
         lines.push("Latest authority probe receipt: <none>".to_string());
     }
@@ -1836,6 +1847,10 @@ fn format_status_report(status: &cocoon_runtime::ServiceStatusReport) -> String 
             "Latest FD launch probe mode: {}",
             receipt.body.mode
         ));
+        lines.push(format!(
+            "Latest FD launch probe structured child result: {}",
+            receipt.body.structured_child_result
+        ));
     } else {
         lines.push("Latest FD launch probe receipt: <none>".to_string());
     }
@@ -1848,6 +1863,10 @@ fn format_status_report(status: &cocoon_runtime::ServiceStatusReport) -> String 
         lines.push(format!(
             "Latest capsule FD launch probe mode: {}",
             receipt.body.mode
+        ));
+        lines.push(format!(
+            "Latest capsule FD launch probe structured child result: {}",
+            receipt.body.structured_child_result
         ));
     } else {
         lines.push("Latest capsule FD launch probe receipt: <none>".to_string());
@@ -1907,6 +1926,9 @@ fn format_authority_probe_report(report: &cocoon_runtime::AuthorityProbeReport) 
             .unwrap_or_else(|| "<signal>".to_string())
     ));
     lines.push(format!("Success: {}", receipt.body.success));
+    if receipt.body.structured_child_result {
+        lines.push("PASS redox authority child returned structured result".to_string());
+    }
     if receipt.body.entered_restricted_namespace {
         lines.push("PASS redox authority child entered restricted namespace".to_string());
     }
@@ -2001,6 +2023,9 @@ fn format_fd_launch_probe_report(report: &cocoon_runtime::FdLaunchProbeReport) -
         body.production_arbitrary_service
     ));
     lines.push(format!("Body hash: {}", report.receipt.body_hash));
+    if body.structured_child_result {
+        lines.push("PASS FD launch child returned structured result".to_string());
+    }
     if body.open_executable_before_restriction {
         lines.push("PASS open executable before restriction".to_string());
     }
@@ -2050,6 +2075,9 @@ fn format_capsule_fd_launch_probe_report(
         body.production_arbitrary_service
     ));
     lines.push(format!("Body hash: {}", report.receipt.body_hash));
+    if body.structured_child_result {
+        lines.push("PASS capsule FD launch child returned structured result".to_string());
+    }
     if body.open_executable_before_restriction {
         lines.push("PASS open installed capsule entrypoint before restriction".to_string());
     }
@@ -2226,6 +2254,7 @@ mod tests {
                 authority_mode: cocoon_runtime::RunAuthorityMode::SmokeUnenforced,
                 authority_enforced_for_service: false,
                 production_arbitrary_service: false,
+                structured_child_result: false,
                 open_executable_before_restriction: false,
                 open_declared_preopens_before_restriction: false,
                 entered_restricted_namespace: false,
@@ -2296,6 +2325,7 @@ mod tests {
                 authority_mode: cocoon_runtime::RunAuthorityMode::SmokeUnenforced,
                 authority_enforced_for_service: false,
                 production_arbitrary_service: false,
+                structured_child_result: false,
                 open_executable_before_restriction: false,
                 open_declared_preopens_before_restriction: false,
                 entered_restricted_namespace: false,
@@ -2358,6 +2388,7 @@ mod tests {
                 mode: cocoon_runtime::AuthorityProbeMode::RedoxChildNullNamespace,
                 child_exit_code: Some(0),
                 success: true,
+                structured_child_result: true,
                 entered_restricted_namespace: true,
                 allowed_preopen_read: true,
                 allowed_preopen_guest_path: "/app".to_string(),
@@ -2382,6 +2413,7 @@ mod tests {
         assert!(output.contains("Authority probe for hello-service@0.1.0"));
         assert!(output.contains("Event: authority_probe"));
         assert!(output.contains("Mode: redox-child-null-namespace"));
+        assert!(output.contains("PASS redox authority child returned structured result"));
         assert!(output.contains("PASS redox authority child entered restricted namespace"));
         assert!(output.contains("PASS redox authority child read allowed preopen /app"));
         assert!(output.contains("PASS redox authority child rejected denied file path"));
@@ -2422,6 +2454,7 @@ mod tests {
                     authority_enforced_for_service: true,
                     production_arbitrary_service: false,
                     child_exit_code: Some(0),
+                    structured_child_result: true,
                     open_executable_before_restriction: true,
                     open_declared_preopens_before_restriction: true,
                     entered_restricted_namespace: true,
@@ -2451,6 +2484,7 @@ mod tests {
         assert!(output.contains("Mode: redox-controlled-service-enforced"));
         assert!(output.contains("Authority enforced for service: true"));
         assert!(output.contains("Production arbitrary service: false"));
+        assert!(output.contains("PASS FD launch child returned structured result"));
         assert!(output.contains("PASS open executable before restriction"));
         assert!(output.contains("PASS enter restricted namespace"));
         assert!(output.contains("PASS exec service from inherited executable FD"));
@@ -2473,6 +2507,7 @@ mod tests {
                         authority_enforced_for_service: true,
                         production_arbitrary_service: false,
                         child_exit_code: Some(0),
+                        structured_child_result: true,
                         open_executable_before_restriction: true,
                         open_declared_preopens_before_restriction: true,
                         entered_restricted_namespace: true,
@@ -2502,6 +2537,7 @@ mod tests {
         assert!(output.contains("Mode: redox-enforced-capsule-entrypoint"));
         assert!(output.contains("Authority enforced for service: true"));
         assert!(output.contains("Production arbitrary service: false"));
+        assert!(output.contains("PASS capsule FD launch child returned structured result"));
         assert!(output.contains("PASS open installed capsule entrypoint before restriction"));
         assert!(output.contains("PASS open declared preopens before restriction"));
         assert!(output.contains("PASS enter manifest-derived restricted namespace"));

@@ -139,6 +139,9 @@ Goal: prove Redox authority enforcement after the lifecycle is running.
   `production_arbitrary_service = false` until multiple service profiles pass.
 - Add P1.2g multi-profile QEMU evidence for the same Redox FD run backend using
   `log-service` and `network-denied-service` profiles.
+- Add P1.2h structured child result evidence so the parent records structured
+  child/service results in receipts while keeping stdout markers as
+  human-readable logs.
 - Construct the service namespace.
 - Pass preopened handles.
 - Assert denied scheme/path access fails.

@@ -28,6 +28,13 @@ use crate::receipt::sign_receipt_body;
 use crate::run::verify_installed_capsule_unlocked;
 use crate::{Result, RuntimeError};
 
+#[cfg(any(target_os = "redox", test))]
+const STRUCTURED_CHILD_RESULT_PREFIX: &str = "COCOON_AUTHORITY_RESULT_JSON=";
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct AuthorityProbeReceipt {
     pub receipt_version: u32,
@@ -44,6 +51,8 @@ pub struct AuthorityProbeReceiptBody {
     pub mode: AuthorityProbeMode,
     pub child_exit_code: Option<i32>,
     pub success: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_child_result: bool,
     pub entered_restricted_namespace: bool,
     pub allowed_preopen_read: bool,
     pub allowed_preopen_guest_path: String,
@@ -136,6 +145,8 @@ pub struct FdLaunchProbeReceiptBody {
     pub authority_enforced_for_service: bool,
     pub production_arbitrary_service: bool,
     pub child_exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_child_result: bool,
     pub open_executable_before_restriction: bool,
     pub open_declared_preopens_before_restriction: bool,
     pub entered_restricted_namespace: bool,
@@ -200,6 +211,7 @@ pub(crate) struct RedoxFdLaunchBackendReport {
     pub child_exit_code: Option<i32>,
     pub success: bool,
     pub service_enforced: bool,
+    pub structured_child_result: bool,
     pub open_executable_before_restriction: bool,
     pub open_declared_preopens_before_restriction: bool,
     pub entered_restricted_namespace: bool,
@@ -230,6 +242,33 @@ pub struct FdLaunchProbeChildReport {
     pub denied_file_rejected: bool,
     pub hidden_scheme_rejected: bool,
     pub failure_message: String,
+}
+
+#[cfg(any(target_os = "redox", test))]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct StructuredChildResult {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    open_executable_before_restriction: bool,
+    #[serde(default)]
+    open_declared_preopens_before_restriction: bool,
+    #[serde(default)]
+    entered_restricted_namespace: bool,
+    #[serde(default)]
+    exec_from_fd_attempted: bool,
+    #[serde(default)]
+    exec_from_fd_succeeded: bool,
+    #[serde(default)]
+    allowed_preopen_read: bool,
+    #[serde(default)]
+    denied_file_rejected: bool,
+    #[serde(default)]
+    hidden_scheme_rejected: bool,
+    #[serde(default)]
+    blocked: bool,
+    #[serde(default)]
+    failure_message: String,
 }
 
 pub fn probe_installed_authority(
@@ -453,15 +492,23 @@ fn probe_installed_authority_impl(
     fs::write(&stderr_log, &output.stderr)?;
 
     let stdout_text = String::from_utf8_lossy(&output.stdout);
-    let entered_restricted_namespace =
-        stdout_text.contains("PASS redox authority child entered restricted namespace");
-    let allowed_preopen_read =
-        stdout_text.contains("PASS redox authority child read allowed preopen");
-    let denied_file_rejected =
-        stdout_text.contains("PASS redox authority child rejected denied file path");
-    let hidden_scheme_rejected =
-        stdout_text.contains("PASS redox authority child rejected hidden tcp scheme");
+    let structured_results = structured_child_results(&stdout_text)?;
+    let authority_result = structured_child_result(&structured_results, "authority-probe");
+    let structured_child_result = authority_result.is_some();
+    let entered_restricted_namespace = authority_result
+        .map(|result| result.entered_restricted_namespace)
+        .unwrap_or(false);
+    let allowed_preopen_read = authority_result
+        .map(|result| result.allowed_preopen_read)
+        .unwrap_or(false);
+    let denied_file_rejected = authority_result
+        .map(|result| result.denied_file_rejected)
+        .unwrap_or(false);
+    let hidden_scheme_rejected = authority_result
+        .map(|result| result.hidden_scheme_rejected)
+        .unwrap_or(false);
     let success = output.status.success()
+        && structured_child_result
         && entered_restricted_namespace
         && allowed_preopen_read
         && denied_file_rejected
@@ -482,6 +529,7 @@ fn probe_installed_authority_impl(
         mode: AuthorityProbeMode::RedoxChildNullNamespace,
         child_exit_code: output.status.code(),
         success,
+        structured_child_result,
         entered_restricted_namespace,
         allowed_preopen_read,
         allowed_preopen_guest_path: preopen.guest_path.to_string(),
@@ -555,28 +603,53 @@ fn probe_fd_launch_impl(
     fs::write(&stderr_log, &output.stderr)?;
 
     let stdout_text = String::from_utf8_lossy(&output.stdout);
-    let open_executable_before_restriction =
-        stdout_text.contains("PASS open executable before restriction");
-    let open_declared_preopens_before_restriction = true;
-    let entered_restricted_namespace = stdout_text.contains("PASS enter restricted namespace");
-    let exec_from_fd_attempted = stdout_text
-        .contains("PASS attempt exec service from inherited executable FD")
-        || stdout_text.contains("BLOCKED redox FD-only service launch");
-    let exec_from_fd_succeeded =
-        stdout_text.contains("PASS exec service from inherited executable FD");
-    let allowed_preopen_read = stdout_text.contains("SERVICE PASS allowed preopen read");
-    let denied_file_rejected = stdout_text.contains("SERVICE PASS denied path rejected");
-    let hidden_scheme_rejected = stdout_text.contains("SERVICE PASS denied scheme rejected");
-    let blocked = stdout_text.contains("BLOCKED redox FD-only service launch");
+    let structured_results = structured_child_results(&stdout_text)?;
+    let launcher_result = structured_child_result(&structured_results, "fd-launch-child");
+    let service_result = structured_child_result(&structured_results, "fd-launch-service");
+    let blocked_result = structured_child_result(&structured_results, "fd-launch-blocked");
+    let structured_child_result =
+        launcher_result.is_some() && (service_result.is_some() || blocked_result.is_some());
+    let open_executable_before_restriction = launcher_result
+        .map(|result| result.open_executable_before_restriction)
+        .unwrap_or(false);
+    let open_declared_preopens_before_restriction = launcher_result
+        .map(|result| result.open_declared_preopens_before_restriction)
+        .unwrap_or(false);
+    let entered_restricted_namespace = launcher_result
+        .map(|result| result.entered_restricted_namespace)
+        .unwrap_or(false);
+    let exec_from_fd_attempted = launcher_result
+        .map(|result| result.exec_from_fd_attempted)
+        .unwrap_or(false)
+        || blocked_result
+            .map(|result| result.exec_from_fd_attempted)
+            .unwrap_or(false);
+    let exec_from_fd_succeeded = service_result
+        .map(|result| result.exec_from_fd_succeeded)
+        .unwrap_or(false);
+    let allowed_preopen_read = service_result
+        .map(|result| result.allowed_preopen_read)
+        .unwrap_or(false);
+    let denied_file_rejected = service_result
+        .map(|result| result.denied_file_rejected)
+        .unwrap_or(false);
+    let hidden_scheme_rejected = service_result
+        .map(|result| result.hidden_scheme_rejected)
+        .unwrap_or(false);
+    let blocked = blocked_result.map(|result| result.blocked).unwrap_or(false);
     let service_enforced = output.status.success()
+        && structured_child_result
         && open_executable_before_restriction
+        && open_declared_preopens_before_restriction
         && entered_restricted_namespace
         && exec_from_fd_succeeded
         && allowed_preopen_read
         && denied_file_rejected
         && hidden_scheme_rejected;
     let classified_blocked = output.status.success()
+        && structured_child_result
         && open_executable_before_restriction
+        && open_declared_preopens_before_restriction
         && entered_restricted_namespace
         && exec_from_fd_attempted
         && blocked;
@@ -607,6 +680,7 @@ fn probe_fd_launch_impl(
         authority_enforced_for_service: service_enforced,
         production_arbitrary_service: false,
         child_exit_code: output.status.code(),
+        structured_child_result,
         open_executable_before_restriction,
         open_declared_preopens_before_restriction,
         entered_restricted_namespace,
@@ -662,6 +736,7 @@ fn probe_capsule_fd_launch_impl(
         authority_enforced_for_service: backend.service_enforced,
         production_arbitrary_service: false,
         child_exit_code: backend.child_exit_code,
+        structured_child_result: backend.structured_child_result,
         open_executable_before_restriction: backend.open_executable_before_restriction,
         open_declared_preopens_before_restriction: backend
             .open_declared_preopens_before_restriction,
@@ -750,21 +825,42 @@ fn run_redox_capsule_fd_launch_backend_impl(
     fs::write(&stderr_log, &output.stderr)?;
 
     let stdout_text = String::from_utf8_lossy(&output.stdout);
-    let open_executable_before_restriction =
-        stdout_text.contains("PASS open installed capsule entrypoint before restriction");
-    let opened_preopens_before_restriction =
-        stdout_text.contains("PASS open declared preopens before restriction");
-    let entered_restricted_namespace =
-        stdout_text.contains("PASS enter manifest-derived restricted namespace");
-    let exec_from_fd_attempted = stdout_text
-        .contains("PASS attempt fexec installed capsule entrypoint")
-        || stdout_text.contains("BLOCKED redox capsule FD-only launch");
-    let exec_from_fd_succeeded = stdout_text.contains("PASS fexec installed capsule entrypoint");
-    let allowed_preopen_read = stdout_text.contains("PASS service reads declared resource");
-    let denied_file_rejected = stdout_text.contains("PASS denied ambient path rejected");
-    let hidden_scheme_rejected = stdout_text.contains("PASS undeclared tcp scheme rejected");
-    let blocked = stdout_text.contains("BLOCKED redox capsule FD-only launch");
+    let structured_results = structured_child_results(&stdout_text)?;
+    let launcher_result = structured_child_result(&structured_results, "capsule-fd-launch-child");
+    let service_result = structured_child_result(&structured_results, "capsule-fd-launch-service");
+    let blocked_result = structured_child_result(&structured_results, "capsule-fd-launch-blocked");
+    let structured_child_result =
+        launcher_result.is_some() && (service_result.is_some() || blocked_result.is_some());
+    let open_executable_before_restriction = launcher_result
+        .map(|result| result.open_executable_before_restriction)
+        .unwrap_or(false);
+    let opened_preopens_before_restriction = launcher_result
+        .map(|result| result.open_declared_preopens_before_restriction)
+        .unwrap_or(false);
+    let entered_restricted_namespace = launcher_result
+        .map(|result| result.entered_restricted_namespace)
+        .unwrap_or(false);
+    let exec_from_fd_attempted = launcher_result
+        .map(|result| result.exec_from_fd_attempted)
+        .unwrap_or(false)
+        || blocked_result
+            .map(|result| result.exec_from_fd_attempted)
+            .unwrap_or(false);
+    let exec_from_fd_succeeded = service_result
+        .map(|result| result.exec_from_fd_succeeded)
+        .unwrap_or(false);
+    let allowed_preopen_read = service_result
+        .map(|result| result.allowed_preopen_read)
+        .unwrap_or(false);
+    let denied_file_rejected = service_result
+        .map(|result| result.denied_file_rejected)
+        .unwrap_or(false);
+    let hidden_scheme_rejected = service_result
+        .map(|result| result.hidden_scheme_rejected)
+        .unwrap_or(false);
+    let blocked = blocked_result.map(|result| result.blocked).unwrap_or(false);
     let service_enforced = output.status.success()
+        && structured_child_result
         && open_executable_before_restriction
         && opened_preopens_before_restriction
         && entered_restricted_namespace
@@ -773,6 +869,7 @@ fn run_redox_capsule_fd_launch_backend_impl(
         && denied_file_rejected
         && hidden_scheme_rejected;
     let classified_blocked = output.status.success()
+        && structured_child_result
         && open_executable_before_restriction
         && opened_preopens_before_restriction
         && entered_restricted_namespace
@@ -808,6 +905,7 @@ fn run_redox_capsule_fd_launch_backend_impl(
         child_exit_code: output.status.code(),
         success: output.status.success(),
         service_enforced,
+        structured_child_result,
         open_executable_before_restriction,
         open_declared_preopens_before_restriction: opened_preopens_before_restriction,
         entered_restricted_namespace,
@@ -888,6 +986,39 @@ fn run_capsule_fd_launch_child(
     Ok(command.output()?)
 }
 
+#[cfg(any(target_os = "redox", test))]
+fn structured_child_results(stdout_text: &str) -> Result<Vec<StructuredChildResult>> {
+    stdout_text
+        .lines()
+        .filter_map(|line| line.strip_prefix(STRUCTURED_CHILD_RESULT_PREFIX))
+        .map(|json| {
+            serde_json::from_str::<StructuredChildResult>(json).map_err(|error| {
+                RuntimeError::AuthorityProbe(format!(
+                    "invalid structured child result '{json}': {error}"
+                ))
+            })
+        })
+        .collect()
+}
+
+#[cfg(target_os = "redox")]
+fn structured_child_result<'a>(
+    results: &'a [StructuredChildResult],
+    kind: &str,
+) -> Option<&'a StructuredChildResult> {
+    results.iter().find(|result| result.kind == kind)
+}
+
+#[cfg(target_os = "redox")]
+fn emit_structured_child_result(result: &StructuredChildResult) -> Result<()> {
+    use std::io::Write;
+
+    let json = serde_json::to_string(result)?;
+    println!("{STRUCTURED_CHILD_RESULT_PREFIX}{json}");
+    std::io::stdout().flush()?;
+    Ok(())
+}
+
 #[cfg(target_os = "redox")]
 fn extract_blocked_line(stdout_text: &str) -> Option<String> {
     stdout_text
@@ -966,6 +1097,7 @@ fn run_fd_launch_probe_child_impl(
 ) -> Result<FdLaunchProbeChildReport> {
     enter_fd_launch_namespace()?;
     println!("PASS open executable before restriction");
+    println!("PASS open declared preopens before restriction");
     println!("PASS enter restricted namespace");
 
     let denied_file_rejected = fs::File::open(denied_file_path).is_err();
@@ -983,6 +1115,16 @@ fn run_fd_launch_probe_child_impl(
     }
 
     println!("PASS attempt exec service from inherited executable FD");
+    emit_structured_child_result(&StructuredChildResult {
+        kind: "fd-launch-child".to_string(),
+        open_executable_before_restriction: true,
+        open_declared_preopens_before_restriction: true,
+        entered_restricted_namespace: true,
+        exec_from_fd_attempted: true,
+        denied_file_rejected,
+        hidden_scheme_rejected,
+        ..StructuredChildResult::default()
+    })?;
     match fexec_fd_launch_fixture(
         executable_fd,
         allowed_preopen_fd,
@@ -995,6 +1137,16 @@ fn run_fd_launch_probe_child_impl(
             println!(
                 "BLOCKED redox FD-only service launch stable API not proven: {failure_message}"
             );
+            emit_structured_child_result(&StructuredChildResult {
+                kind: "fd-launch-blocked".to_string(),
+                entered_restricted_namespace: true,
+                exec_from_fd_attempted: true,
+                denied_file_rejected,
+                hidden_scheme_rejected,
+                blocked: true,
+                failure_message: failure_message.clone(),
+                ..StructuredChildResult::default()
+            })?;
             Ok(FdLaunchProbeChildReport {
                 entered_restricted_namespace: true,
                 exec_from_fd_attempted: true,
@@ -1037,6 +1189,16 @@ fn run_capsule_fd_launch_probe_child_impl(
     }
 
     println!("PASS attempt fexec installed capsule entrypoint");
+    emit_structured_child_result(&StructuredChildResult {
+        kind: "capsule-fd-launch-child".to_string(),
+        open_executable_before_restriction: true,
+        open_declared_preopens_before_restriction: true,
+        entered_restricted_namespace: true,
+        exec_from_fd_attempted: true,
+        denied_file_rejected,
+        hidden_scheme_rejected,
+        ..StructuredChildResult::default()
+    })?;
     match fexec_capsule_entrypoint(
         executable_fd,
         allowed_preopen_fd,
@@ -1050,6 +1212,16 @@ fn run_capsule_fd_launch_probe_child_impl(
             println!(
                 "BLOCKED redox capsule FD-only launch stable API not proven: {failure_message}"
             );
+            emit_structured_child_result(&StructuredChildResult {
+                kind: "capsule-fd-launch-blocked".to_string(),
+                entered_restricted_namespace: true,
+                exec_from_fd_attempted: true,
+                denied_file_rejected,
+                hidden_scheme_rejected,
+                blocked: true,
+                failure_message: failure_message.clone(),
+                ..StructuredChildResult::default()
+            })?;
             Ok(FdLaunchProbeChildReport {
                 entered_restricted_namespace: true,
                 exec_from_fd_attempted: true,
@@ -1257,6 +1429,14 @@ fn run_fd_launch_fixture_impl(
         )));
     }
     println!("SERVICE PASS denied scheme rejected");
+    emit_structured_child_result(&StructuredChildResult {
+        kind: "fd-launch-service".to_string(),
+        exec_from_fd_succeeded: true,
+        allowed_preopen_read: true,
+        denied_file_rejected: true,
+        hidden_scheme_rejected: true,
+        ..StructuredChildResult::default()
+    })?;
     Ok(())
 }
 
@@ -1347,6 +1527,14 @@ fn run_authority_probe_child_impl(
         )));
     }
     println!("PASS redox authority child rejected hidden tcp scheme");
+    emit_structured_child_result(&StructuredChildResult {
+        kind: "authority-probe".to_string(),
+        entered_restricted_namespace: true,
+        allowed_preopen_read: true,
+        denied_file_rejected,
+        hidden_scheme_rejected,
+        ..StructuredChildResult::default()
+    })?;
 
     Ok(AuthorityProbeChildReport {
         capsule_name: manifest.capsule.name.to_string(),
@@ -1679,6 +1867,7 @@ mod tests {
             mode: AuthorityProbeMode::RedoxChildNullNamespace,
             child_exit_code: Some(0),
             success: true,
+            structured_child_result: true,
             entered_restricted_namespace: true,
             allowed_preopen_read: true,
             allowed_preopen_guest_path: "/app".to_string(),
@@ -1713,6 +1902,7 @@ mod tests {
             authority_enforced_for_service: true,
             production_arbitrary_service: false,
             child_exit_code: Some(0),
+            structured_child_result: true,
             open_executable_before_restriction: true,
             open_declared_preopens_before_restriction: true,
             entered_restricted_namespace: true,
@@ -1779,6 +1969,23 @@ mod tests {
                 mode
             );
         }
+    }
+
+    #[test]
+    fn structured_child_results_are_parsed_from_prefixed_stdout_lines() {
+        let stdout = concat!(
+            "human readable line\n",
+            "COCOON_AUTHORITY_RESULT_JSON={\"kind\":\"capsule-fd-launch-service\",\"exec_from_fd_succeeded\":true,\"allowed_preopen_read\":true,\"denied_file_rejected\":true,\"hidden_scheme_rejected\":true}\n",
+        );
+
+        let results = structured_child_results(stdout).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind, "capsule-fd-launch-service");
+        assert!(results[0].exec_from_fd_succeeded);
+        assert!(results[0].allowed_preopen_read);
+        assert!(results[0].denied_file_rejected);
+        assert!(results[0].hidden_scheme_rejected);
     }
 
     #[test]

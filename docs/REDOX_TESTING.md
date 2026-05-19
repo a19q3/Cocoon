@@ -93,12 +93,12 @@ dependencies that are unavailable, `BLOCKED` for known external/toolchain
 blockers that are not success evidence, and `TODO` for planned checks that must
 fail required gates until implemented.
 
-The current P1.2 authority proof uses stdout markers from controlled children
-and services as one part of the evidence. Required Redoxer/QEMU commands must
+The current P1.2 authority proof records structured child results from
+controlled children and fexeced services. Required Redoxer/QEMU commands must
 also exit successfully, receipts and logs are written, and `cocoon audit`
-verifies receipt body hashes, archive links, and captured log hashes. The
-stdout markers are not a standalone trust boundary; a structured child result
-bound into the receipt body is future hardening.
+verifies receipt body hashes, archive links, and captured log hashes. Stdout
+markers remain in the logs for human review, but they are not the primary parsed
+evidence source for P1.2h paths.
 
 For the current Redox authority evidence chain and upstream review boundary,
 see [reports/redox-community-review-package.md](reports/redox-community-review-package.md).

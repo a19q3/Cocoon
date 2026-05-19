@@ -801,16 +801,19 @@ fn qemu_smoke() -> anyhow::Result<()> {
          {cocoon_binary} probe-capsule-fd-launch hello-service-fd --install-root {install_root} && \
          {cocoon_binary} run hello-service-fd --enforce-redox-authority --install-root {install_root} && \
          {cocoon_binary} status hello-service-fd --install-root {install_root} && \
+         {cocoon_binary} status hello-service-fd --json --install-root {install_root} && \
          {cocoon_binary} logs hello-service-fd --stream stdout --install-root {install_root} && \
          {cocoon_binary} audit hello-service-fd --install-root {install_root} && \
          {cocoon_binary} install {capsule_log} --install-root {install_root} && \
          {cocoon_binary} run log-service --enforce-redox-authority --install-root {install_root} && \
          {cocoon_binary} status log-service --install-root {install_root} && \
+         {cocoon_binary} status log-service --json --install-root {install_root} && \
          {cocoon_binary} logs log-service --stream stdout --install-root {install_root} && \
          {cocoon_binary} audit log-service --install-root {install_root} && \
          {cocoon_binary} install {capsule_network_denied} --install-root {install_root} && \
          {cocoon_binary} run network-denied-service --enforce-redox-authority --install-root {install_root} && \
          {cocoon_binary} status network-denied-service --install-root {install_root} && \
+         {cocoon_binary} status network-denied-service --json --install-root {install_root} && \
          {cocoon_binary} logs network-denied-service --stream stdout --install-root {install_root} && \
          {cocoon_binary} audit network-denied-service --install-root {install_root} && \
          {cocoon_binary} audit hello-service --install-root {install_root} && \
@@ -1036,6 +1039,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     }
 
     if install_run.contains("PASS redox authority child entered restricted namespace")
+        && install_run.contains("PASS redox authority child returned structured result")
         && install_run.contains("PASS redox authority child read allowed preopen")
         && install_run.contains("PASS redox authority child rejected denied file path")
         && install_run.contains("PASS redox authority child rejected hidden tcp scheme")
@@ -1064,6 +1068,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
         && install_run.contains("Mode: redox-controlled-service-enforced")
         && install_run.contains("Authority enforced for service: true")
         && install_run.contains("Production arbitrary service: false")
+        && install_run.contains("PASS FD launch child returned structured result")
         && install_run.contains("PASS open executable before restriction")
         && install_run.contains("PASS enter restricted namespace")
         && install_run.contains("PASS exec service from inherited executable FD")
@@ -1087,6 +1092,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
         && install_run.contains("Mode: redox-enforced-capsule-entrypoint")
         && install_run.contains("Authority enforced for service: true")
         && install_run.contains("Production arbitrary service: false")
+        && install_run.contains("PASS capsule FD launch child returned structured result")
         && install_run.contains("PASS open installed capsule entrypoint before restriction")
         && install_run.contains("PASS open declared preopens before restriction")
         && install_run.contains("PASS enter manifest-derived restricted namespace")
@@ -1112,6 +1118,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
         && install_run.contains("Authority mode: redox-enforced-capsule-entrypoint")
         && install_run.contains("Authority enforced for service: true")
         && install_run.contains("Production arbitrary service: false")
+        && install_run.contains("PASS run parsed structured child result")
         && install_run.contains("PASS run opened executable before restriction")
         && install_run.contains("PASS run opened declared preopens before restriction")
         && install_run.contains("PASS run entered manifest-derived restricted namespace")
@@ -1121,11 +1128,14 @@ fn qemu_smoke() -> anyhow::Result<()> {
         && install_run.contains("PASS run rejected undeclared scheme")
         && install_run.contains("Latest run authority mode: redox-enforced-capsule-entrypoint")
         && install_run.contains("Latest run authority enforced for service: true")
+        && install_run.contains("Latest run structured child result: true")
+        && install_run.contains("\"structured_child_result\": true")
         && install_run.contains("PASS fexec installed capsule entrypoint")
         && install_run.contains("PASS service reads declared resource")
         && install_run.contains("PASS denied ambient path rejected")
         && install_run.contains("PASS undeclared tcp scheme rejected")
         && install_run.contains("latest run receipt body hash")
+        && install_run.contains("latest run structured child result: true")
         && install_run.contains("latest run stdout log hash")
         && install_run.contains("latest run FD launch fexec: true")
         && install_run.contains("latest run FD launch hidden scheme: true (/scheme/tcp)")
@@ -1159,11 +1169,13 @@ fn qemu_smoke() -> anyhow::Result<()> {
         && install_run.contains("latest authority probe stdout log hash")
         && install_run.contains("latest authority probe stderr log hash")
         && install_run.contains("latest authority probe mode: redox-child-null-namespace")
+        && install_run.contains("latest authority probe structured child result: true")
         && install_run.contains("latest fd launch probe receipt body hash")
         && install_run.contains("latest fd launch probe receipt archive link")
         && install_run.contains("latest fd launch probe stdout log hash")
         && install_run.contains("latest fd launch probe stderr log hash")
         && install_run.contains("latest fd launch probe mode: redox-controlled-service-enforced")
+        && install_run.contains("latest fd launch probe structured child result: true")
     {
         println!("PASS audit Redox authority probe receipt inside redox");
         println!("PASS redox authority probe receipt audited");
@@ -1178,6 +1190,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
         && install_run.contains("latest capsule fd launch probe stderr log hash")
         && install_run
             .contains("latest capsule fd launch probe mode: redox-enforced-capsule-entrypoint")
+        && install_run.contains("latest capsule fd launch probe structured child result: true")
     {
         println!("PASS audit Redox FD-only launch probe receipts inside redox");
     } else {
@@ -1353,6 +1366,7 @@ fn fd_run_profile_pass(output: &str, capsule_name: &str, profile: &str) -> bool 
         && output.contains("Authority mode: redox-enforced-capsule-entrypoint")
         && output.contains("Authority enforced for service: true")
         && output.contains("Production arbitrary service: false")
+        && output.contains("PASS run parsed structured child result")
         && output.contains("PASS run opened executable before restriction")
         && output.contains("PASS run opened declared preopens before restriction")
         && output.contains("PASS run entered manifest-derived restricted namespace")
@@ -1363,7 +1377,10 @@ fn fd_run_profile_pass(output: &str, capsule_name: &str, profile: &str) -> bool 
         && output.contains(&format!("Status for {capsule_name}"))
         && output.contains("Latest run authority mode: redox-enforced-capsule-entrypoint")
         && output.contains("Latest run authority enforced for service: true")
+        && output.contains("Latest run structured child result: true")
+        && output.contains("\"structured_child_result\": true")
         && output.contains(&format!("Audit passed for {capsule_name}"))
+        && output.contains("latest run structured child result: true")
         && output.contains("latest run FD launch fexec: true")
         && output.contains("latest run FD launch hidden scheme: true (/scheme/tcp)")
         && output.contains(&format!("SERVICE PROFILE {profile}"))

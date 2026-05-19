@@ -11,6 +11,10 @@ use crate::install::acquire_capsule_lock;
 use crate::receipt::{ReceiptSigningOptions, sign_receipt_body};
 use crate::{Result, RuntimeError};
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 const HASH_MANIFEST_NAME: &str = "manifest/hashes.json";
 const SIGNATURE_NAME: &str = "manifest/signature.json";
 const SBOM_NAME: &str = "manifest/sbom.json";
@@ -38,6 +42,8 @@ pub struct RunReceiptBody {
     pub authority_enforced_for_service: bool,
     #[serde(default)]
     pub production_arbitrary_service: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_child_result: bool,
     #[serde(default)]
     pub open_executable_before_restriction: bool,
     #[serde(default)]
@@ -260,6 +266,7 @@ pub fn run_installed_capsule_with_options_and_receipt_signing(
         authority_mode: options.authority_mode(),
         authority_enforced_for_service: false,
         production_arbitrary_service: false,
+        structured_child_result: false,
         open_executable_before_restriction: false,
         open_declared_preopens_before_restriction: false,
         entered_restricted_namespace: false,
@@ -322,6 +329,7 @@ fn run_installed_capsule_with_redox_fd_backend(
         authority_mode: RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint,
         authority_enforced_for_service: backend.service_enforced,
         production_arbitrary_service: false,
+        structured_child_result: backend.structured_child_result,
         open_executable_before_restriction: backend.open_executable_before_restriction,
         open_declared_preopens_before_restriction: backend
             .open_declared_preopens_before_restriction,

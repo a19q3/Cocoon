@@ -57,6 +57,7 @@ direction.
 | P1.2e installed capsule entrypoint probe | DONE | `PASS probe Redox FD-only installed capsule entrypoint inside redox` | A materialized capsule entrypoint can be opened before restriction and fexeced under a manifest-derived namespace. |
 | P1.2f explicit run backend | DONE | `PASS cocoon run uses FD-only capsule entrypoint backend inside redox` | `cocoon run --enforce-redox-authority` uses the same backend and writes a normal `capsule_run` receipt. |
 | P1.2g multi-profile backend | DONE | `PASS P1.2g log-service FD run profile inside redox`; `PASS P1.2g network-denied-service FD run profile inside redox` | The explicit Redox FD run backend works across multiple installed service profiles. |
+| P1.2h structured child result evidence | DONE | Structured-result checks appear in probe/run/status --json/audit evidence | Parent parsing no longer treats stdout markers as the primary evidence source for authority booleans. |
 
 ## Current Validation Commands
 
@@ -84,12 +85,12 @@ failures of the QEMU authority runtime path. Redoxer/QEMU tasks should be run
 serially because concurrent invocations can contend for Redoxer temporary disk
 state.
 
-The current P1.2 authority proof uses stdout markers from controlled children
-and services as one part of the evidence. The harness also requires successful
-child/command exit status, and Cocoon writes receipts and logs that are checked
-through status/log/audit readback. Marker parsing is not treated as a standalone
-trust boundary; a structured child result bound into the receipt body is future
-hardening.
+The current P1.2 authority proof keeps stdout markers from controlled children
+and services as human-readable log evidence. P1.2h adds structured child results
+that are parsed by the parent and bound into run/probe receipt bodies. The
+harness also requires successful child/command exit status, and Cocoon writes
+receipts and logs that are checked through status/status --json/log/audit
+readback.
 
 ## What Cocoon Does Not Claim Yet
 

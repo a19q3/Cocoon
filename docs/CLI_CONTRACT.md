@@ -1,6 +1,6 @@
 # Cocoon CLI Contract
 
-Last updated: 2026-05-17
+Last updated: 2026-05-19
 
 This contract is for automation that drives Cocoon through the CLI. Current
 production validation remains CLI-only.
@@ -38,6 +38,9 @@ capsule entrypoint backend and records `event = "capsule_run"` with
 `production_arbitrary_service = false`. On non-Redox platforms the flag fails
 closed with `Redox FD-only run backend unavailable on this platform`. P1.2g
 uses the same run receipt shape for additional Redox service profiles.
+P1.2h adds `structured_child_result = true` to Redox authority probe, FD launch
+probe, capsule FD launch probe, and enforced run receipts when the parent parsed
+structured child/service evidence.
 
 The final production `redox-enforced` label remains reserved for later
 operational boundary review. `status --json` reports the latest

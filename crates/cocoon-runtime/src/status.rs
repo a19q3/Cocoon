@@ -14,6 +14,10 @@ use crate::{
     RunReceipt, RuntimeError,
 };
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceState {
     NotInstalled,
@@ -248,6 +252,10 @@ pub fn audit_capsule_with_receipt_policy(
         });
         if receipt.body.authority_enforced_for_service {
             checks.push(AuditCheck {
+                name: "latest run structured child result".to_string(),
+                detail: receipt.body.structured_child_result.to_string(),
+            });
+            checks.push(AuditCheck {
                 name: "latest run FD launch executable preopen".to_string(),
                 detail: receipt.body.open_executable_before_restriction.to_string(),
             });
@@ -315,6 +323,10 @@ pub fn audit_capsule_with_receipt_policy(
         checks.push(AuditCheck {
             name: "latest authority probe mode".to_string(),
             detail: receipt.body.mode.to_string(),
+        });
+        checks.push(AuditCheck {
+            name: "latest authority probe structured child result".to_string(),
+            detail: receipt.body.structured_child_result.to_string(),
         });
         if let Some(public_key) = signature_public_key(&receipt.signature) {
             checks.push(AuditCheck {
@@ -560,6 +572,8 @@ fn run_receipt_body_without_actual_args_bytes(
         authority_mode: &'a crate::run::RunAuthorityMode,
         authority_enforced_for_service: bool,
         production_arbitrary_service: bool,
+        #[serde(skip_serializing_if = "is_false")]
+        structured_child_result: bool,
         open_executable_before_restriction: bool,
         open_declared_preopens_before_restriction: bool,
         entered_restricted_namespace: bool,
@@ -591,6 +605,7 @@ fn run_receipt_body_without_actual_args_bytes(
             authority_mode: &body.authority_mode,
             authority_enforced_for_service: body.authority_enforced_for_service,
             production_arbitrary_service: body.production_arbitrary_service,
+            structured_child_result: body.structured_child_result,
             open_executable_before_restriction: body.open_executable_before_restriction,
             open_declared_preopens_before_restriction: body
                 .open_declared_preopens_before_restriction,
@@ -619,6 +634,7 @@ fn legacy_run_receipt_body_bytes(body: &crate::run::RunReceiptBody) -> Result<Op
     if body.authority_enforced_for_service
         || !body.actual_args.is_empty()
         || body.production_arbitrary_service
+        || body.structured_child_result
         || body.open_executable_before_restriction
         || body.open_declared_preopens_before_restriction
         || body.entered_restricted_namespace
@@ -841,6 +857,10 @@ fn push_fd_launch_probe_audit_checks(
             "{} ({})",
             receipt.body.authority_enforced_for_service, receipt.body.mode
         ),
+    });
+    checks.push(AuditCheck {
+        name: format!("latest {label} structured child result"),
+        detail: receipt.body.structured_child_result.to_string(),
     });
     if let Some(public_key) = signature_public_key(&receipt.signature) {
         checks.push(AuditCheck {
@@ -1090,6 +1110,7 @@ mod tests {
             authority_mode: crate::run::RunAuthorityMode::SmokeUnenforced,
             authority_enforced_for_service: false,
             production_arbitrary_service: false,
+            structured_child_result: false,
             open_executable_before_restriction: false,
             open_declared_preopens_before_restriction: false,
             entered_restricted_namespace: false,
@@ -1179,6 +1200,7 @@ mod tests {
             authority_mode: crate::run::RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint,
             authority_enforced_for_service: true,
             production_arbitrary_service: false,
+            structured_child_result: false,
             open_executable_before_restriction: true,
             open_declared_preopens_before_restriction: true,
             entered_restricted_namespace: true,

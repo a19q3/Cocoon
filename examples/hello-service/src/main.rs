@@ -43,6 +43,9 @@ fn authority_self_test() -> Result<(), String> {
         ));
     }
     println!("PASS undeclared tcp scheme rejected");
+    println!(
+        "COCOON_AUTHORITY_RESULT_JSON={{\"kind\":\"capsule-fd-launch-service\",\"exec_from_fd_succeeded\":true,\"allowed_preopen_read\":true,\"denied_file_rejected\":true,\"hidden_scheme_rejected\":true}}"
+    );
     Ok(())
 }
 

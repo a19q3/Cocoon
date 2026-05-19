@@ -213,10 +213,10 @@ evidence through `probe-authority`, FD-only launch probes, and
 `redox-enforced`, until the Redox launcher boundary, broader service profiles,
 native packaging path, and service lifecycle semantics are reviewed.
 
-Current authority proof still uses stdout markers from controlled children and
-services together with child exit status, run/probe receipts, log hashes, and
-`cocoon audit` verification. Replacing marker parsing with a structured child
-result bound into the receipt body is a future hardening item.
+Current authority proof records structured child results together with
+child/command exit status, run/probe receipts, log hashes, and `cocoon audit`
+verification. Stdout markers remain in the logs for human review, but the
+structured result is now bound into the receipt body as explicit evidence.
 
 ## Docs
 
@@ -227,6 +227,7 @@ result bound into the receipt body is a future hardening item.
 - [CODING_STYLE.md](docs/CODING_STYLE.md)
 - [MACOS_DEV.md](docs/MACOS_DEV.md)
 - [REDOX_TESTING.md](docs/REDOX_TESTING.md)
+- [reports/p1.2h-structured-child-result.md](docs/reports/p1.2h-structured-child-result.md)
 - [reports/p2a-pkgar-boundary.md](docs/reports/p2a-pkgar-boundary.md)
 
 ## License
