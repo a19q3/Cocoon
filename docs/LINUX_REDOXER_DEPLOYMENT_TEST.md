@@ -145,8 +145,8 @@ PASS image overlay prepared
 == Redox target smoke ==
 PASS redox link probe cargo check
 PASS cocoon-cli redox cargo check
-TODO redox link probe binary link (requires Redox C sysroot/toolchain)
-TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
+BLOCKED redox link probe binary link (requires Redox C sysroot/toolchain)
+BLOCKED cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
 
 == Redoxer smoke ==
 PASS/SKIP ...

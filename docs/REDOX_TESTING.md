@@ -46,8 +46,8 @@ PASS image overlay prepared
 == Redox target smoke ==
 PASS redox link probe cargo check
 PASS cocoon-cli redox cargo check
-TODO redox link probe binary link (requires Redox C sysroot/toolchain)
-TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
+BLOCKED redox link probe binary link (requires Redox C sysroot/toolchain)
+BLOCKED cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
 
 == QEMU smoke ==
 SKIP boot redox qemu (install with `cargo install redoxer`)
@@ -83,10 +83,15 @@ SKIP reject tampered install inside redox
 SKIP collect receipts/logs
 ```
 
-The direct Redox binary link TODOs are reported but not executed by the
-integrated smoke gate because the current native artifact path is Redoxer.
+The direct Redox binary link blockers are reported but not counted as success
+evidence because the current native artifact path is Redoxer.
 Run `cargo xtask redoxer-smoke` separately when checking only Redoxer build/run
 readiness.
+
+Smoke output uses `PASS` only for executed checks, `SKIP` for optional local
+dependencies that are unavailable, `BLOCKED` for known external/toolchain
+blockers that are not success evidence, and `TODO` for planned checks that must
+fail required gates until implemented.
 
 For the current Redox authority evidence chain and upstream review boundary,
 see [reports/redox-community-review-package.md](reports/redox-community-review-package.md).

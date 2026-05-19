@@ -228,6 +228,13 @@ P1.2g exercises the same Redox FD run backend with additional `log-service` and
 `network-denied-service` profiles. This is multi-profile enforcement evidence,
 not a promotion to the final `redox-enforced` production label.
 
+Current P1.2 probes use a narrow stdout marker protocol as part of their
+evidence. The parent also requires child exit success, writes receipts and logs,
+and `cocoon audit` verifies receipt body hashes, archive links, and captured log
+hashes. The markers are not a standalone trust boundary. Future hardening should
+replace marker parsing with a structured child result that is bound into the
+receipt body.
+
 Install, recover, audit, status, logs, run, rollback, and check-install acquire
 a per-capsule lock under the install root before reading or mutating the active
 capsule tree. If another operation already holds the lock, the CLI fails closed

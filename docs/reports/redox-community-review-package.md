@@ -71,17 +71,18 @@ cargo xtask qemu-smoke
 cargo xtask redox-smoke
 ```
 
-`cargo xtask redox-smoke` intentionally reports direct target binary link TODOs
-without executing the known-failing link commands:
+`cargo xtask redox-smoke` intentionally reports direct target binary link
+blockers without executing the known-failing link commands:
 
 ```text
-TODO redox link probe binary link (requires Redox C sysroot/toolchain)
-TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
+BLOCKED redox link probe binary link (requires Redox C sysroot/toolchain)
+BLOCKED cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
 ```
 
-Those TODOs are packaging/toolchain blockers, not failures of the QEMU authority
-runtime path. Redoxer/QEMU tasks should be run serially because concurrent
-invocations can contend for Redoxer temporary disk state.
+Those entries are packaging/toolchain blockers, not success evidence and not
+failures of the QEMU authority runtime path. Redoxer/QEMU tasks should be run
+serially because concurrent invocations can contend for Redoxer temporary disk
+state.
 
 ## What Cocoon Does Not Claim Yet
 

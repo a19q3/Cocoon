@@ -92,16 +92,16 @@ P1.2g multi-profile FD run backend QEMU coverage: PASS
 Redox authority community review package: docs/reports/redox-community-review-package.md
 ```
 
-`cargo xtask redox-smoke` currently reports these expected direct target TODOs
-without running the known-failing direct link commands:
+`cargo xtask redox-smoke` currently reports these direct target blockers without
+running the known-failing direct link commands:
 
 ```text
-TODO redox link probe binary link (requires Redox C sysroot/toolchain)
-TODO cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
+BLOCKED redox link probe binary link (requires Redox C sysroot/toolchain)
+BLOCKED cocoon-cli redox binary link (requires Redox C sysroot/toolchain)
 ```
 
-These TODOs are not runtime failures. They remain production blockers for a
-native Redox distribution path.
+These blockers are not runtime failures and are not success evidence. They
+remain production blockers for a native Redox distribution path.
 
 ## Immediate Implementation Queue
 

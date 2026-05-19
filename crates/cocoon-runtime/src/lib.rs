@@ -1,14 +1,12 @@
 #![deny(unsafe_code)]
 
-//! Cocoon Runtime for RedoxOS.
+//! Runtime support for Cocoon service installation, receipts, status reporting,
+//! Redox authority probes, and FD-only launch evidence.
 //!
-//! This crate is a placeholder for the Redox-specific runtime.
-//! Phase P1 will implement:
-//! - Capsule installation
-//! - Namespace / scheme setup
-//! - Process spawn
-//! - Log capture
-//! - Rollback support
+//! This crate owns the runtime-side evidence path. It does not implement a
+//! package manager, namespace manager, or service supervisor. Platforms that
+//! cannot provide Redox namespace/fd authority report plan or smoke-only modes
+//! instead of claiming runtime isolation.
 
 pub mod authority;
 pub mod install;
