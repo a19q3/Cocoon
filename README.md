@@ -228,6 +228,7 @@ structured result is now bound into the receipt body as explicit evidence.
 - [MACOS_DEV.md](docs/MACOS_DEV.md)
 - [REDOX_TESTING.md](docs/REDOX_TESTING.md)
 - [reports/p1.2h-structured-child-result.md](docs/reports/p1.2h-structured-child-result.md)
+- [reports/p1.2i-review-hardening.md](docs/reports/p1.2i-review-hardening.md)
 - [reports/p2a-pkgar-boundary.md](docs/reports/p2a-pkgar-boundary.md)
 
 ## License

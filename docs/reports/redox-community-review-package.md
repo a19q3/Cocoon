@@ -58,6 +58,18 @@ direction.
 | P1.2f explicit run backend | DONE | `PASS cocoon run uses FD-only capsule entrypoint backend inside redox` | `cocoon run --enforce-redox-authority` uses the same backend and writes a normal `capsule_run` receipt. |
 | P1.2g multi-profile backend | DONE | `PASS P1.2g log-service FD run profile inside redox`; `PASS P1.2g network-denied-service FD run profile inside redox` | The explicit Redox FD run backend works across multiple installed service profiles. |
 | P1.2h structured child result evidence | DONE | Structured-result checks appear in probe/run/status --json/audit evidence | Parent parsing no longer treats stdout markers as the primary evidence source for authority booleans. |
+| P1.2i review hardening and evidence freeze | DONE | Unit tests reject malformed/missing structured evidence; review package records PASS/BLOCKED boundaries | The current evidence package is frozen for review without adding deeper launcher assumptions. |
+
+## Proof Boundary Matrix
+
+| Stage | Proves | Does not prove |
+| --- | --- | --- |
+| P1.2d | A controlled fixture can run from an inherited executable FD under restricted Redox authority. | Installed capsule entrypoints or production `cocoon run`. |
+| P1.2e | An installed capsule entrypoint can be opened before restriction and fexeced under a manifest-derived restricted namespace. | The normal run backend or multiple service profiles. |
+| P1.2f | Explicit `cocoon run --enforce-redox-authority` uses the audited FD launch backend and writes normal run receipts. | Default Redox `run` enforcement or final `redox-enforced` production status. |
+| P1.2g | The same explicit FD backend works across hello, log, and network-denied profiles in QEMU. | Broad arbitrary-service catalog coverage, supervision, or reboot lifecycle semantics. |
+| P1.2h | Structured child/service results are bound into receipts and surfaced through status/status --json/audit. | Cryptographic attestation from the child process or a reviewed upstream launcher contract. |
+| P1.2i | Malformed or incomplete structured evidence cannot be treated as enforced evidence by local evidence logic. | New Redox launcher behavior beyond the already-tested FD path. |
 
 ## Current Validation Commands
 
@@ -87,10 +99,12 @@ state.
 
 The current P1.2 authority proof keeps stdout markers from controlled children
 and services as human-readable log evidence. P1.2h adds structured child results
-that are parsed by the parent and bound into run/probe receipt bodies. The
-harness also requires successful child/command exit status, and Cocoon writes
-receipts and logs that are checked through status/status --json/log/audit
-readback.
+that are parsed by the parent and bound into run/probe receipt bodies. P1.2i
+adds negative tests so malformed JSON, missing launcher results, missing service
+or blocked results, and stdout-only PASS markers cannot become enforced
+evidence. The harness also requires successful child/command exit status, and
+Cocoon writes receipts and logs that are checked through status/status
+--json/log/audit readback.
 
 ## What Cocoon Does Not Claim Yet
 
@@ -142,8 +156,8 @@ rollback metadata, and audit readback.
 
 ## Next Cocoon Steps
 
-1. Keep P1.2g as the reviewable evidence baseline.
-2. Keep this report and the P1.2d/P1.2e/P1.2f/P1.2g reports ready for later
+1. Keep P1.2i as the reviewable evidence freeze.
+2. Keep this report and the P1.2d/P1.2e/P1.2f/P1.2g/P1.2h/P1.2i reports ready for later
    Redox/Ibuki review, but avoid deepening unconfirmed launcher assumptions in
    the meantime.
 3. Add more service profiles only after the launcher boundary is accepted or

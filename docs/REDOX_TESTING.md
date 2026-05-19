@@ -98,7 +98,10 @@ controlled children and fexeced services. Required Redoxer/QEMU commands must
 also exit successfully, receipts and logs are written, and `cocoon audit`
 verifies receipt body hashes, archive links, and captured log hashes. Stdout
 markers remain in the logs for human review, but they are not the primary parsed
-evidence source for P1.2h paths.
+evidence source for P1.2h paths. P1.2i adds local negative tests so malformed
+structured JSON, stdout-only PASS markers, missing launcher results, missing
+service-or-blocked results, and mismatched authority result kinds are not
+accepted as enforced evidence.
 
 For the current Redox authority evidence chain and upstream review boundary,
 see [reports/redox-community-review-package.md](reports/redox-community-review-package.md).

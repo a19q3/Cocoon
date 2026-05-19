@@ -142,6 +142,8 @@ Goal: prove Redox authority enforcement after the lifecycle is running.
 - Add P1.2h structured child result evidence so the parent records structured
   child/service results in receipts while keeping stdout markers as
   human-readable logs.
+- Freeze P1.2i review evidence by adding negative tests for malformed or
+  incomplete structured child results and documenting the exact proof boundary.
 - Construct the service namespace.
 - Pass preopened handles.
 - Assert denied scheme/path access fails.

@@ -40,7 +40,9 @@ closed with `Redox FD-only run backend unavailable on this platform`. P1.2g
 uses the same run receipt shape for additional Redox service profiles.
 P1.2h adds `structured_child_result = true` to Redox authority probe, FD launch
 probe, capsule FD launch probe, and enforced run receipts when the parent parsed
-structured child/service evidence.
+structured child/service evidence. P1.2i keeps the CLI shape unchanged and adds
+negative tests so malformed or incomplete structured evidence is rejected before
+receipts can claim enforced authority.
 
 The final production `redox-enforced` label remains reserved for later
 operational boundary review. `status --json` reports the latest

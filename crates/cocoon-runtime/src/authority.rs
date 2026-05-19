@@ -271,6 +271,31 @@ struct StructuredChildResult {
     failure_message: String,
 }
 
+#[cfg(any(target_os = "redox", test))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct AuthorityStructuredEvidence {
+    structured_child_result: bool,
+    entered_restricted_namespace: bool,
+    allowed_preopen_read: bool,
+    denied_file_rejected: bool,
+    hidden_scheme_rejected: bool,
+}
+
+#[cfg(any(target_os = "redox", test))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FdLaunchStructuredEvidence {
+    structured_child_result: bool,
+    open_executable_before_restriction: bool,
+    open_declared_preopens_before_restriction: bool,
+    entered_restricted_namespace: bool,
+    exec_from_fd_attempted: bool,
+    exec_from_fd_succeeded: bool,
+    allowed_preopen_read: bool,
+    denied_file_rejected: bool,
+    hidden_scheme_rejected: bool,
+    blocked: bool,
+}
+
 pub fn probe_installed_authority(
     capsule_name: &CapsuleName,
     install_root: &Path,
@@ -493,26 +518,13 @@ fn probe_installed_authority_impl(
 
     let stdout_text = String::from_utf8_lossy(&output.stdout);
     let structured_results = structured_child_results(&stdout_text)?;
-    let authority_result = structured_child_result(&structured_results, "authority-probe");
-    let structured_child_result = authority_result.is_some();
-    let entered_restricted_namespace = authority_result
-        .map(|result| result.entered_restricted_namespace)
-        .unwrap_or(false);
-    let allowed_preopen_read = authority_result
-        .map(|result| result.allowed_preopen_read)
-        .unwrap_or(false);
-    let denied_file_rejected = authority_result
-        .map(|result| result.denied_file_rejected)
-        .unwrap_or(false);
-    let hidden_scheme_rejected = authority_result
-        .map(|result| result.hidden_scheme_rejected)
-        .unwrap_or(false);
+    let evidence = authority_structured_evidence(&structured_results);
     let success = output.status.success()
-        && structured_child_result
-        && entered_restricted_namespace
-        && allowed_preopen_read
-        && denied_file_rejected
-        && hidden_scheme_rejected;
+        && evidence.structured_child_result
+        && evidence.entered_restricted_namespace
+        && evidence.allowed_preopen_read
+        && evidence.denied_file_rejected
+        && evidence.hidden_scheme_rejected;
     if !success {
         return Err(RuntimeError::AuthorityProbe(format!(
             "authority child failed: exit={:?}, stdout={}, stderr={}",
@@ -529,14 +541,14 @@ fn probe_installed_authority_impl(
         mode: AuthorityProbeMode::RedoxChildNullNamespace,
         child_exit_code: output.status.code(),
         success,
-        structured_child_result,
-        entered_restricted_namespace,
-        allowed_preopen_read,
+        structured_child_result: evidence.structured_child_result,
+        entered_restricted_namespace: evidence.entered_restricted_namespace,
+        allowed_preopen_read: evidence.allowed_preopen_read,
         allowed_preopen_guest_path: preopen.guest_path.to_string(),
         denied_file_path: denied_file_probe_path(&manifest),
-        denied_file_rejected,
+        denied_file_rejected: evidence.denied_file_rejected,
         hidden_scheme_path: hidden_scheme_probe_path(&[]),
-        hidden_scheme_rejected,
+        hidden_scheme_rejected: evidence.hidden_scheme_rejected,
         stdout_log: stdout_log.display().to_string(),
         stdout_hash: hash_bytes(&output.stdout),
         stderr_log: stderr_log.display().to_string(),
@@ -604,55 +616,28 @@ fn probe_fd_launch_impl(
 
     let stdout_text = String::from_utf8_lossy(&output.stdout);
     let structured_results = structured_child_results(&stdout_text)?;
-    let launcher_result = structured_child_result(&structured_results, "fd-launch-child");
-    let service_result = structured_child_result(&structured_results, "fd-launch-service");
-    let blocked_result = structured_child_result(&structured_results, "fd-launch-blocked");
-    let structured_child_result =
-        launcher_result.is_some() && (service_result.is_some() || blocked_result.is_some());
-    let open_executable_before_restriction = launcher_result
-        .map(|result| result.open_executable_before_restriction)
-        .unwrap_or(false);
-    let open_declared_preopens_before_restriction = launcher_result
-        .map(|result| result.open_declared_preopens_before_restriction)
-        .unwrap_or(false);
-    let entered_restricted_namespace = launcher_result
-        .map(|result| result.entered_restricted_namespace)
-        .unwrap_or(false);
-    let exec_from_fd_attempted = launcher_result
-        .map(|result| result.exec_from_fd_attempted)
-        .unwrap_or(false)
-        || blocked_result
-            .map(|result| result.exec_from_fd_attempted)
-            .unwrap_or(false);
-    let exec_from_fd_succeeded = service_result
-        .map(|result| result.exec_from_fd_succeeded)
-        .unwrap_or(false);
-    let allowed_preopen_read = service_result
-        .map(|result| result.allowed_preopen_read)
-        .unwrap_or(false);
-    let denied_file_rejected = service_result
-        .map(|result| result.denied_file_rejected)
-        .unwrap_or(false);
-    let hidden_scheme_rejected = service_result
-        .map(|result| result.hidden_scheme_rejected)
-        .unwrap_or(false);
-    let blocked = blocked_result.map(|result| result.blocked).unwrap_or(false);
+    let evidence = fd_launch_structured_evidence(
+        &structured_results,
+        "fd-launch-child",
+        "fd-launch-service",
+        "fd-launch-blocked",
+    );
     let service_enforced = output.status.success()
-        && structured_child_result
-        && open_executable_before_restriction
-        && open_declared_preopens_before_restriction
-        && entered_restricted_namespace
-        && exec_from_fd_succeeded
-        && allowed_preopen_read
-        && denied_file_rejected
-        && hidden_scheme_rejected;
+        && evidence.structured_child_result
+        && evidence.open_executable_before_restriction
+        && evidence.open_declared_preopens_before_restriction
+        && evidence.entered_restricted_namespace
+        && evidence.exec_from_fd_succeeded
+        && evidence.allowed_preopen_read
+        && evidence.denied_file_rejected
+        && evidence.hidden_scheme_rejected;
     let classified_blocked = output.status.success()
-        && structured_child_result
-        && open_executable_before_restriction
-        && open_declared_preopens_before_restriction
-        && entered_restricted_namespace
-        && exec_from_fd_attempted
-        && blocked;
+        && evidence.structured_child_result
+        && evidence.open_executable_before_restriction
+        && evidence.open_declared_preopens_before_restriction
+        && evidence.entered_restricted_namespace
+        && evidence.exec_from_fd_attempted
+        && evidence.blocked;
     if !service_enforced && !classified_blocked {
         return Err(RuntimeError::AuthorityProbe(format!(
             "fd-launch probe failed: exit={:?}, stdout={}, stderr={}",
@@ -680,18 +665,19 @@ fn probe_fd_launch_impl(
         authority_enforced_for_service: service_enforced,
         production_arbitrary_service: false,
         child_exit_code: output.status.code(),
-        structured_child_result,
-        open_executable_before_restriction,
-        open_declared_preopens_before_restriction,
-        entered_restricted_namespace,
-        exec_from_fd_attempted,
-        exec_from_fd_succeeded,
-        allowed_preopen_read,
+        structured_child_result: evidence.structured_child_result,
+        open_executable_before_restriction: evidence.open_executable_before_restriction,
+        open_declared_preopens_before_restriction: evidence
+            .open_declared_preopens_before_restriction,
+        entered_restricted_namespace: evidence.entered_restricted_namespace,
+        exec_from_fd_attempted: evidence.exec_from_fd_attempted,
+        exec_from_fd_succeeded: evidence.exec_from_fd_succeeded,
+        allowed_preopen_read: evidence.allowed_preopen_read,
         allowed_preopen_guest_path,
         denied_file_path,
-        denied_file_rejected,
+        denied_file_rejected: evidence.denied_file_rejected,
         hidden_scheme_path,
-        hidden_scheme_rejected,
+        hidden_scheme_rejected: evidence.hidden_scheme_rejected,
         failure_message,
         stdout_log: stdout_log.display().to_string(),
         stdout_hash: hash_bytes(&output.stdout),
@@ -826,55 +812,28 @@ fn run_redox_capsule_fd_launch_backend_impl(
 
     let stdout_text = String::from_utf8_lossy(&output.stdout);
     let structured_results = structured_child_results(&stdout_text)?;
-    let launcher_result = structured_child_result(&structured_results, "capsule-fd-launch-child");
-    let service_result = structured_child_result(&structured_results, "capsule-fd-launch-service");
-    let blocked_result = structured_child_result(&structured_results, "capsule-fd-launch-blocked");
-    let structured_child_result =
-        launcher_result.is_some() && (service_result.is_some() || blocked_result.is_some());
-    let open_executable_before_restriction = launcher_result
-        .map(|result| result.open_executable_before_restriction)
-        .unwrap_or(false);
-    let opened_preopens_before_restriction = launcher_result
-        .map(|result| result.open_declared_preopens_before_restriction)
-        .unwrap_or(false);
-    let entered_restricted_namespace = launcher_result
-        .map(|result| result.entered_restricted_namespace)
-        .unwrap_or(false);
-    let exec_from_fd_attempted = launcher_result
-        .map(|result| result.exec_from_fd_attempted)
-        .unwrap_or(false)
-        || blocked_result
-            .map(|result| result.exec_from_fd_attempted)
-            .unwrap_or(false);
-    let exec_from_fd_succeeded = service_result
-        .map(|result| result.exec_from_fd_succeeded)
-        .unwrap_or(false);
-    let allowed_preopen_read = service_result
-        .map(|result| result.allowed_preopen_read)
-        .unwrap_or(false);
-    let denied_file_rejected = service_result
-        .map(|result| result.denied_file_rejected)
-        .unwrap_or(false);
-    let hidden_scheme_rejected = service_result
-        .map(|result| result.hidden_scheme_rejected)
-        .unwrap_or(false);
-    let blocked = blocked_result.map(|result| result.blocked).unwrap_or(false);
+    let evidence = fd_launch_structured_evidence(
+        &structured_results,
+        "capsule-fd-launch-child",
+        "capsule-fd-launch-service",
+        "capsule-fd-launch-blocked",
+    );
     let service_enforced = output.status.success()
-        && structured_child_result
-        && open_executable_before_restriction
-        && opened_preopens_before_restriction
-        && entered_restricted_namespace
-        && exec_from_fd_succeeded
-        && allowed_preopen_read
-        && denied_file_rejected
-        && hidden_scheme_rejected;
+        && evidence.structured_child_result
+        && evidence.open_executable_before_restriction
+        && evidence.open_declared_preopens_before_restriction
+        && evidence.entered_restricted_namespace
+        && evidence.exec_from_fd_succeeded
+        && evidence.allowed_preopen_read
+        && evidence.denied_file_rejected
+        && evidence.hidden_scheme_rejected;
     let classified_blocked = output.status.success()
-        && structured_child_result
-        && open_executable_before_restriction
-        && opened_preopens_before_restriction
-        && entered_restricted_namespace
-        && exec_from_fd_attempted
-        && blocked;
+        && evidence.structured_child_result
+        && evidence.open_executable_before_restriction
+        && evidence.open_declared_preopens_before_restriction
+        && evidence.entered_restricted_namespace
+        && evidence.exec_from_fd_attempted
+        && evidence.blocked;
     if !service_enforced && !classified_blocked {
         return Err(RuntimeError::AuthorityProbe(format!(
             "capsule fd-launch backend failed: exit={:?}, stdout={}, stderr={}",
@@ -905,18 +864,19 @@ fn run_redox_capsule_fd_launch_backend_impl(
         child_exit_code: output.status.code(),
         success: output.status.success(),
         service_enforced,
-        structured_child_result,
-        open_executable_before_restriction,
-        open_declared_preopens_before_restriction: opened_preopens_before_restriction,
-        entered_restricted_namespace,
-        exec_from_fd_attempted,
-        exec_from_fd_succeeded,
-        allowed_preopen_read,
+        structured_child_result: evidence.structured_child_result,
+        open_executable_before_restriction: evidence.open_executable_before_restriction,
+        open_declared_preopens_before_restriction: evidence
+            .open_declared_preopens_before_restriction,
+        entered_restricted_namespace: evidence.entered_restricted_namespace,
+        exec_from_fd_attempted: evidence.exec_from_fd_attempted,
+        exec_from_fd_succeeded: evidence.exec_from_fd_succeeded,
+        allowed_preopen_read: evidence.allowed_preopen_read,
         allowed_preopen_guest_path,
         denied_file_path,
-        denied_file_rejected,
+        denied_file_rejected: evidence.denied_file_rejected,
         hidden_scheme_path,
-        hidden_scheme_rejected,
+        hidden_scheme_rejected: evidence.hidden_scheme_rejected,
         failure_message,
         stdout_log: stdout_log.display().to_string(),
         stdout_hash: hash_bytes(&output.stdout),
@@ -1001,12 +961,76 @@ fn structured_child_results(stdout_text: &str) -> Result<Vec<StructuredChildResu
         .collect()
 }
 
-#[cfg(target_os = "redox")]
+#[cfg(any(target_os = "redox", test))]
 fn structured_child_result<'a>(
     results: &'a [StructuredChildResult],
     kind: &str,
 ) -> Option<&'a StructuredChildResult> {
     results.iter().find(|result| result.kind == kind)
+}
+
+#[cfg(any(target_os = "redox", test))]
+fn authority_structured_evidence(results: &[StructuredChildResult]) -> AuthorityStructuredEvidence {
+    let result = structured_child_result(results, "authority-probe");
+    AuthorityStructuredEvidence {
+        structured_child_result: result.is_some(),
+        entered_restricted_namespace: result
+            .map(|result| result.entered_restricted_namespace)
+            .unwrap_or(false),
+        allowed_preopen_read: result
+            .map(|result| result.allowed_preopen_read)
+            .unwrap_or(false),
+        denied_file_rejected: result
+            .map(|result| result.denied_file_rejected)
+            .unwrap_or(false),
+        hidden_scheme_rejected: result
+            .map(|result| result.hidden_scheme_rejected)
+            .unwrap_or(false),
+    }
+}
+
+#[cfg(any(target_os = "redox", test))]
+fn fd_launch_structured_evidence(
+    results: &[StructuredChildResult],
+    launcher_kind: &str,
+    service_kind: &str,
+    blocked_kind: &str,
+) -> FdLaunchStructuredEvidence {
+    let launcher_result = structured_child_result(results, launcher_kind);
+    let service_result = structured_child_result(results, service_kind);
+    let blocked_result = structured_child_result(results, blocked_kind);
+    FdLaunchStructuredEvidence {
+        structured_child_result: launcher_result.is_some()
+            && (service_result.is_some() || blocked_result.is_some()),
+        open_executable_before_restriction: launcher_result
+            .map(|result| result.open_executable_before_restriction)
+            .unwrap_or(false),
+        open_declared_preopens_before_restriction: launcher_result
+            .map(|result| result.open_declared_preopens_before_restriction)
+            .unwrap_or(false),
+        entered_restricted_namespace: launcher_result
+            .map(|result| result.entered_restricted_namespace)
+            .unwrap_or(false),
+        exec_from_fd_attempted: launcher_result
+            .map(|result| result.exec_from_fd_attempted)
+            .unwrap_or(false)
+            || blocked_result
+                .map(|result| result.exec_from_fd_attempted)
+                .unwrap_or(false),
+        exec_from_fd_succeeded: service_result
+            .map(|result| result.exec_from_fd_succeeded)
+            .unwrap_or(false),
+        allowed_preopen_read: service_result
+            .map(|result| result.allowed_preopen_read)
+            .unwrap_or(false),
+        denied_file_rejected: service_result
+            .map(|result| result.denied_file_rejected)
+            .unwrap_or(false),
+        hidden_scheme_rejected: service_result
+            .map(|result| result.hidden_scheme_rejected)
+            .unwrap_or(false),
+        blocked: blocked_result.map(|result| result.blocked).unwrap_or(false),
+    }
 }
 
 #[cfg(target_os = "redox")]
@@ -1986,6 +2010,115 @@ mod tests {
         assert!(results[0].allowed_preopen_read);
         assert!(results[0].denied_file_rejected);
         assert!(results[0].hidden_scheme_rejected);
+    }
+
+    #[test]
+    fn structured_child_results_reject_malformed_json() {
+        let stdout = "COCOON_AUTHORITY_RESULT_JSON={not-json}\n";
+
+        let error = structured_child_results(stdout).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid structured child result")
+        );
+    }
+
+    #[test]
+    fn stdout_markers_without_structured_results_are_not_evidence() {
+        let stdout = concat!(
+            "PASS open installed capsule entrypoint before restriction\n",
+            "PASS open declared preopens before restriction\n",
+            "PASS enter manifest-derived restricted namespace\n",
+            "PASS fexec installed capsule entrypoint\n",
+            "PASS service reads declared resource\n",
+            "PASS denied ambient path rejected\n",
+            "PASS undeclared tcp scheme rejected\n",
+        );
+
+        let results = structured_child_results(stdout).unwrap();
+        let evidence = fd_launch_structured_evidence(
+            &results,
+            "capsule-fd-launch-child",
+            "capsule-fd-launch-service",
+            "capsule-fd-launch-blocked",
+        );
+
+        assert!(results.is_empty());
+        assert!(!evidence.structured_child_result);
+        assert!(!evidence.exec_from_fd_succeeded);
+        assert!(!evidence.allowed_preopen_read);
+    }
+
+    #[test]
+    fn fd_launch_structured_evidence_requires_launcher_result() {
+        let results = vec![StructuredChildResult {
+            kind: "capsule-fd-launch-service".to_string(),
+            exec_from_fd_succeeded: true,
+            allowed_preopen_read: true,
+            denied_file_rejected: true,
+            hidden_scheme_rejected: true,
+            ..StructuredChildResult::default()
+        }];
+
+        let evidence = fd_launch_structured_evidence(
+            &results,
+            "capsule-fd-launch-child",
+            "capsule-fd-launch-service",
+            "capsule-fd-launch-blocked",
+        );
+
+        assert!(!evidence.structured_child_result);
+        assert!(!evidence.open_executable_before_restriction);
+        assert!(!evidence.entered_restricted_namespace);
+        assert!(evidence.exec_from_fd_succeeded);
+        assert!(evidence.allowed_preopen_read);
+    }
+
+    #[test]
+    fn fd_launch_structured_evidence_requires_service_or_blocked_result() {
+        let results = vec![StructuredChildResult {
+            kind: "capsule-fd-launch-child".to_string(),
+            open_executable_before_restriction: true,
+            open_declared_preopens_before_restriction: true,
+            entered_restricted_namespace: true,
+            exec_from_fd_attempted: true,
+            ..StructuredChildResult::default()
+        }];
+
+        let evidence = fd_launch_structured_evidence(
+            &results,
+            "capsule-fd-launch-child",
+            "capsule-fd-launch-service",
+            "capsule-fd-launch-blocked",
+        );
+
+        assert!(!evidence.structured_child_result);
+        assert!(evidence.open_executable_before_restriction);
+        assert!(evidence.open_declared_preopens_before_restriction);
+        assert!(evidence.entered_restricted_namespace);
+        assert!(evidence.exec_from_fd_attempted);
+        assert!(!evidence.exec_from_fd_succeeded);
+    }
+
+    #[test]
+    fn authority_structured_evidence_requires_authority_result() {
+        let results = vec![StructuredChildResult {
+            kind: "capsule-fd-launch-service".to_string(),
+            allowed_preopen_read: true,
+            denied_file_rejected: true,
+            hidden_scheme_rejected: true,
+            ..StructuredChildResult::default()
+        }];
+
+        let evidence = authority_structured_evidence(&results);
+
+        assert!(!evidence.structured_child_result);
+        assert!(!evidence.entered_restricted_namespace);
+        assert!(!evidence.allowed_preopen_read);
+        assert!(!evidence.denied_file_rejected);
+        assert!(!evidence.hidden_scheme_rejected);
     }
 
     #[test]
