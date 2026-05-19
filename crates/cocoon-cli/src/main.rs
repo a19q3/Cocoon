@@ -1677,6 +1677,9 @@ fn format_run_receipt(receipt: &cocoon_runtime::RunReceipt) -> String {
     lines.push(format!("Event: {}", receipt.event));
     lines.push(format!("Command: {}", receipt.body.command));
     lines.push(format!("Args: {:?}", receipt.body.args));
+    if receipt.body.actual_args != receipt.body.args {
+        lines.push(format!("Actual args: {:?}", receipt.body.actual_args));
+    }
     lines.push(format!(
         "Authority enforced: {}",
         receipt.body.authority_enforced
@@ -2218,6 +2221,7 @@ mod tests {
                 capsule_version: "0.1.0".to_string(),
                 command: "/app/bin/hello-service".to_string(),
                 args: Vec::new(),
+                actual_args: Vec::new(),
                 authority_enforced: false,
                 authority_mode: cocoon_runtime::RunAuthorityMode::SmokeUnenforced,
                 authority_enforced_for_service: false,
@@ -2287,6 +2291,7 @@ mod tests {
                 capsule_version: "0.1.0".to_string(),
                 command: "/app/bin/hello-service".to_string(),
                 args: Vec::new(),
+                actual_args: Vec::new(),
                 authority_enforced: false,
                 authority_mode: cocoon_runtime::RunAuthorityMode::SmokeUnenforced,
                 authority_enforced_for_service: false,

@@ -30,6 +30,8 @@ pub struct RunReceiptBody {
     pub capsule_version: String,
     pub command: String,
     pub args: Vec<String>,
+    #[serde(default)]
+    pub actual_args: Vec<String>,
     pub authority_enforced: bool,
     pub authority_mode: RunAuthorityMode,
     #[serde(default)]
@@ -253,6 +255,7 @@ pub fn run_installed_capsule_with_options_and_receipt_signing(
         capsule_version: manifest.capsule.version.to_string(),
         command: manifest.entry.cmd.to_string(),
         args: manifest.entry.args.clone(),
+        actual_args: manifest.entry.args.clone(),
         authority_enforced: options.authority_enforced(),
         authority_mode: options.authority_mode(),
         authority_enforced_for_service: false,
@@ -314,6 +317,7 @@ fn run_installed_capsule_with_redox_fd_backend(
         capsule_version: backend.capsule_version,
         command: backend.command,
         args: backend.args,
+        actual_args: backend.actual_args,
         authority_enforced: true,
         authority_mode: RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint,
         authority_enforced_for_service: backend.service_enforced,
@@ -571,6 +575,7 @@ mod tests {
 
         assert_eq!(receipt.event, "capsule_run");
         assert_eq!(receipt.body.capsule_name, "run-test");
+        assert_eq!(receipt.body.actual_args, receipt.body.args);
         assert!(!receipt.body.authority_enforced);
         assert_eq!(
             receipt.body.authority_mode,

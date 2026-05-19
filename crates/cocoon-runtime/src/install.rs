@@ -321,7 +321,10 @@ pub(crate) fn acquire_capsule_lock(install_root: &Path, capsule_name: &str) -> R
     match fs::create_dir(&lock_path) {
         Ok(()) => {
             let owner = format!("pid={}\n", std::process::id());
-            fs::write(lock_path.join("owner"), owner)?;
+            if let Err(error) = fs::write(lock_path.join("owner"), owner) {
+                let _ = fs::remove_dir_all(&lock_path);
+                return Err(error.into());
+            }
             Ok(CapsuleLock { path: lock_path })
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {

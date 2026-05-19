@@ -14,8 +14,10 @@ use cocoon_bundle::SignatureMetadata;
 use cocoon_core::CapsuleName;
 #[cfg(any(target_os = "redox", test))]
 use cocoon_core::hash_bytes;
+#[cfg(any(target_os = "redox", test))]
+use cocoon_core::{CapsuleManifest, SchemeVisibility};
 #[cfg(target_os = "redox")]
-use cocoon_core::{CapsuleManifest, GuestPath, PermissionEffect, PreopenRight, SchemeVisibility};
+use cocoon_core::{GuestPath, PermissionEffect, PreopenRight};
 
 #[cfg(target_os = "redox")]
 use crate::install::acquire_capsule_lock;
@@ -194,6 +196,7 @@ pub(crate) struct RedoxFdLaunchBackendReport {
     pub capsule_version: String,
     pub command: String,
     pub args: Vec<String>,
+    pub actual_args: Vec<String>,
     pub child_exit_code: Option<i32>,
     pub success: bool,
     pub service_enforced: bool,
@@ -484,7 +487,7 @@ fn probe_installed_authority_impl(
         allowed_preopen_guest_path: preopen.guest_path.to_string(),
         denied_file_path: denied_file_probe_path(&manifest),
         denied_file_rejected,
-        hidden_scheme_path: hidden_scheme_probe_path(),
+        hidden_scheme_path: hidden_scheme_probe_path(&[]),
         hidden_scheme_rejected,
         stdout_log: stdout_log.display().to_string(),
         stdout_hash: hash_bytes(&output.stdout),
@@ -520,10 +523,11 @@ fn probe_fd_launch_impl(
     verify_installed_capsule_unlocked(capsule_name, install_root)?;
     let manifest = read_installed_manifest(&current_root)?;
     let preopen = readable_file_preopen(&manifest)?;
-    let allowed_probe_file = current_root.join(cocoon_bundle::MANIFEST_NAME);
+    let allowed_probe_file =
+        declared_preopen_probe_file(&current_root, &manifest.filesystem.root, preopen)?;
     let allowed_preopen_guest_path = preopen.guest_path.to_string();
     let denied_file_path = denied_file_probe_path(&manifest);
-    let hidden_scheme_path = hidden_scheme_probe_path();
+    let hidden_scheme_path = hidden_scheme_probe_path(&[]);
     drop(lock);
 
     let current_exe = current_executable_arg()?;
@@ -709,11 +713,12 @@ fn run_redox_capsule_fd_launch_backend_impl(
         &manifest.entry.cmd,
         "entry.cmd",
     )?;
-    let allowed_probe_file = current_root.join(cocoon_bundle::MANIFEST_NAME);
+    let allowed_probe_file =
+        declared_preopen_probe_file(&current_root, &manifest.filesystem.root, preopen)?;
     let allowed_preopen_guest_path = preopen.guest_path.to_string();
     let denied_file_path = denied_file_probe_path(&manifest);
-    let hidden_scheme_path = hidden_scheme_probe_path();
     let visible_schemes = manifest_fd_launch_schemes(&manifest);
+    let hidden_scheme_path = hidden_scheme_probe_path(&visible_schemes);
     let entry_args = manifest.entry.args.clone();
 
     let executable_fd = open_redox_fd(
@@ -794,6 +799,12 @@ fn run_redox_capsule_fd_launch_backend_impl(
         capsule_version: manifest.capsule.version.to_string(),
         command: manifest.entry.cmd.to_string(),
         args: manifest.entry.args,
+        actual_args: capsule_entrypoint_actual_args(
+            &entry_args,
+            allowed_preopen_fd.raw(),
+            &denied_file_path,
+            &hidden_scheme_path,
+        ),
         child_exit_code: output.status.code(),
         success: output.status.success(),
         service_enforced,
@@ -1177,13 +1188,12 @@ fn fexec_capsule_entrypoint(
     }
 
     let mut args = vec!["capsule-entrypoint".to_string()];
-    args.extend(entry_args.iter().cloned());
-    args.push("--allowed-preopen-fd".to_string());
-    args.push(allowed_preopen_fd.to_string());
-    args.push("--denied-file-path".to_string());
-    args.push(denied_file_path.to_string());
-    args.push("--hidden-scheme-path".to_string());
-    args.push(hidden_scheme_path.to_string());
+    args.extend(capsule_entrypoint_actual_args(
+        entry_args,
+        allowed_preopen_fd,
+        denied_file_path,
+        hidden_scheme_path,
+    ));
 
     let argv = args
         .iter()
@@ -1252,9 +1262,28 @@ fn run_fd_launch_fixture_impl(
 
 #[cfg(target_os = "redox")]
 fn current_executable_arg() -> Result<String> {
-    std::env::args().next().ok_or_else(|| {
-        RuntimeError::AuthorityProbe("current executable argv[0] is unavailable".to_string())
-    })
+    std::env::current_exe()
+        .map(|path| path.display().to_string())
+        .map_err(|error| {
+            RuntimeError::AuthorityProbe(format!("current executable path is unavailable: {error}"))
+        })
+}
+
+#[cfg(any(target_os = "redox", test))]
+fn capsule_entrypoint_actual_args(
+    entry_args: &[String],
+    allowed_preopen_fd: usize,
+    denied_file_path: &str,
+    hidden_scheme_path: &str,
+) -> Vec<String> {
+    let mut args = entry_args.to_vec();
+    args.push("--allowed-preopen-fd".to_string());
+    args.push(allowed_preopen_fd.to_string());
+    args.push("--denied-file-path".to_string());
+    args.push(denied_file_path.to_string());
+    args.push("--hidden-scheme-path".to_string());
+    args.push(hidden_scheme_path.to_string());
+    args
 }
 
 #[cfg(target_os = "redox")]
@@ -1271,7 +1300,8 @@ fn run_authority_probe_child_impl(
     verify_installed_capsule_unlocked(capsule_name, install_root)?;
     let manifest = read_installed_manifest(&current_root)?;
     let preopen = readable_file_preopen(&manifest)?;
-    let allowed_probe_file = current_root.join(cocoon_bundle::MANIFEST_NAME);
+    let allowed_probe_file =
+        declared_preopen_probe_file(&current_root, &manifest.filesystem.root, preopen)?;
     let mut allowed_file = fs::File::open(&allowed_probe_file).map_err(|error| {
         RuntimeError::AuthorityProbe(format!(
             "failed to open allowed preopen probe file '{}': {error}",
@@ -1279,7 +1309,7 @@ fn run_authority_probe_child_impl(
         ))
     })?;
     let denied_file_path = denied_file_probe_path(&manifest);
-    let hidden_scheme_path = hidden_scheme_probe_path();
+    let hidden_scheme_path = hidden_scheme_probe_path(&[]);
     drop(lock);
 
     libredox::call::setrens(0, 0).map_err(|error| {
@@ -1374,12 +1404,18 @@ fn concrete_denied_path(target: &str) -> String {
     }
 }
 
-#[cfg(target_os = "redox")]
-fn hidden_scheme_probe_path() -> String {
-    "/scheme/tcp".to_string()
+#[cfg(any(target_os = "redox", test))]
+fn hidden_scheme_probe_path(visible_schemes: &[String]) -> String {
+    let candidates = ["tcp", "udp", "debug", "display", "sys"];
+    let scheme = candidates
+        .iter()
+        .find(|candidate| !visible_schemes.iter().any(|visible| visible == **candidate))
+        .copied()
+        .unwrap_or("cocoon-hidden-probe");
+    format!("/scheme/{scheme}")
 }
 
-#[cfg(target_os = "redox")]
+#[cfg(any(target_os = "redox", test))]
 fn manifest_fd_launch_schemes(manifest: &CapsuleManifest) -> Vec<String> {
     let mut schemes = vec!["memory".to_string(), "pipe".to_string()];
     for permission in &manifest.permissions {
@@ -1395,12 +1431,66 @@ fn manifest_fd_launch_schemes(manifest: &CapsuleManifest) -> Vec<String> {
     schemes
 }
 
-#[cfg(target_os = "redox")]
+#[cfg(any(target_os = "redox", test))]
 fn maybe_push_redox_runtime_scheme(schemes: &mut Vec<String>, scheme: &str) {
-    if matches!(scheme, "rand" | "time" | "event" | "null") && !schemes.iter().any(|s| s == scheme)
-    {
+    if scheme != "file" && !schemes.iter().any(|s| s == scheme) {
         schemes.push(scheme.to_string());
     }
+}
+
+#[cfg(target_os = "redox")]
+fn declared_preopen_probe_file(
+    current_root: &Path,
+    filesystem_root: &GuestPath,
+    preopen: &cocoon_core::PreopenConfig,
+) -> Result<std::path::PathBuf> {
+    let preopen_path = map_installed_guest_path(
+        current_root,
+        filesystem_root,
+        &preopen.guest_path,
+        "preopen.guest_path",
+    )?;
+    if preopen_path.is_file() {
+        return Ok(preopen_path);
+    }
+
+    if !preopen_path.is_dir() {
+        return Err(RuntimeError::AuthorityProbe(format!(
+            "declared preopen '{}' does not map to an installed file or directory",
+            preopen.guest_path
+        )));
+    }
+
+    let manifest_probe = preopen_path.join(cocoon_bundle::MANIFEST_NAME);
+    if manifest_probe.is_file() {
+        return Ok(manifest_probe);
+    }
+
+    first_regular_file_below(&preopen_path)?.ok_or_else(|| {
+        RuntimeError::AuthorityProbe(format!(
+            "declared preopen '{}' does not contain a readable probe file",
+            preopen.guest_path
+        ))
+    })
+}
+
+#[cfg(target_os = "redox")]
+fn first_regular_file_below(root: &Path) -> Result<Option<std::path::PathBuf>> {
+    let mut entries = fs::read_dir(root)?.collect::<std::result::Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_file() {
+            return Ok(Some(path));
+        }
+        if file_type.is_dir() {
+            if let Some(file) = first_regular_file_below(&path)? {
+                return Ok(Some(file));
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(target_os = "redox")]
@@ -1689,5 +1779,89 @@ mod tests {
                 mode
             );
         }
+    }
+
+    #[test]
+    fn manifest_fd_launch_schemes_include_declared_non_file_schemes() {
+        let manifest = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "scheme-test"
+version = "0.1.0"
+
+[entry]
+cmd = "/app/bin/scheme-test"
+
+[filesystem]
+root = "/app"
+
+[[permission]]
+scheme = "file"
+action = "read"
+target = "/app/**"
+
+[[permission]]
+scheme = "tcp"
+action = "connect"
+target = "*"
+
+[[permission]]
+effect = "deny"
+scheme = "udp"
+action = "connect"
+target = "*"
+
+[[scheme]]
+name = "log"
+visibility = "readwrite"
+target = "service-log"
+
+[[scheme]]
+name = "debug"
+visibility = "hidden"
+target = "debug"
+
+[[preopen]]
+scheme = "file"
+host_path = "/pkg/cocoon/capsules/scheme-test/current"
+guest_path = "/app"
+rights = ["read", "execute"]
+"#,
+        )
+        .unwrap();
+
+        let schemes = manifest_fd_launch_schemes(&manifest);
+
+        assert!(schemes.contains(&"memory".to_string()));
+        assert!(schemes.contains(&"pipe".to_string()));
+        assert!(schemes.contains(&"tcp".to_string()));
+        assert!(schemes.contains(&"log".to_string()));
+        assert!(!schemes.contains(&"file".to_string()));
+        assert!(!schemes.contains(&"udp".to_string()));
+        assert!(!schemes.contains(&"debug".to_string()));
+        assert_ne!(hidden_scheme_probe_path(&schemes), "/scheme/tcp");
+    }
+
+    #[test]
+    fn capsule_entrypoint_actual_args_include_runtime_fd_probe_args() {
+        let args = capsule_entrypoint_actual_args(
+            &["--authority-self-test".to_string()],
+            42,
+            "/home/denied",
+            "/scheme/tcp",
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "--authority-self-test",
+                "--allowed-preopen-fd",
+                "42",
+                "--denied-file-path",
+                "/home/denied",
+                "--hidden-scheme-path",
+                "/scheme/tcp",
+            ]
+        );
     }
 }

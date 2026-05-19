@@ -523,6 +523,13 @@ fn verified_run_receipt_body_bytes(receipt: &RunReceipt) -> Result<Vec<u8>> {
         return Ok(current);
     }
 
+    if let Some(without_actual_args) = run_receipt_body_without_actual_args_bytes(&receipt.body)? {
+        let without_actual_args_hash = hash_bytes(&without_actual_args);
+        if without_actual_args_hash == receipt.body_hash {
+            return Ok(without_actual_args);
+        }
+    }
+
     if let Some(legacy) = legacy_run_receipt_body_bytes(&receipt.body)? {
         let legacy_hash = hash_bytes(&legacy);
         if legacy_hash == receipt.body_hash {
@@ -536,8 +543,81 @@ fn verified_run_receipt_body_bytes(receipt: &RunReceipt) -> Result<Vec<u8>> {
     )))
 }
 
+fn run_receipt_body_without_actual_args_bytes(
+    body: &crate::run::RunReceiptBody,
+) -> Result<Option<Vec<u8>>> {
+    if !body.actual_args.is_empty() {
+        return Ok(None);
+    }
+
+    #[derive(serde::Serialize)]
+    struct RunReceiptBodyWithoutActualArgs<'a> {
+        capsule_name: &'a str,
+        capsule_version: &'a str,
+        command: &'a str,
+        args: &'a [String],
+        authority_enforced: bool,
+        authority_mode: &'a crate::run::RunAuthorityMode,
+        authority_enforced_for_service: bool,
+        production_arbitrary_service: bool,
+        open_executable_before_restriction: bool,
+        open_declared_preopens_before_restriction: bool,
+        entered_restricted_namespace: bool,
+        exec_from_fd_attempted: bool,
+        exec_from_fd_succeeded: bool,
+        allowed_preopen_read: bool,
+        denied_file_path: &'a str,
+        denied_file_rejected: bool,
+        hidden_scheme_path: &'a str,
+        hidden_scheme_rejected: bool,
+        exit_code: Option<i32>,
+        success: bool,
+        stdout_log: &'a str,
+        stdout_hash: &'a str,
+        stderr_log: &'a str,
+        stderr_hash: &'a str,
+        started_at: &'a str,
+        finished_at: &'a str,
+        runtime_version: &'a str,
+    }
+
+    Ok(Some(serde_json::to_vec(
+        &RunReceiptBodyWithoutActualArgs {
+            capsule_name: &body.capsule_name,
+            capsule_version: &body.capsule_version,
+            command: &body.command,
+            args: &body.args,
+            authority_enforced: body.authority_enforced,
+            authority_mode: &body.authority_mode,
+            authority_enforced_for_service: body.authority_enforced_for_service,
+            production_arbitrary_service: body.production_arbitrary_service,
+            open_executable_before_restriction: body.open_executable_before_restriction,
+            open_declared_preopens_before_restriction: body
+                .open_declared_preopens_before_restriction,
+            entered_restricted_namespace: body.entered_restricted_namespace,
+            exec_from_fd_attempted: body.exec_from_fd_attempted,
+            exec_from_fd_succeeded: body.exec_from_fd_succeeded,
+            allowed_preopen_read: body.allowed_preopen_read,
+            denied_file_path: &body.denied_file_path,
+            denied_file_rejected: body.denied_file_rejected,
+            hidden_scheme_path: &body.hidden_scheme_path,
+            hidden_scheme_rejected: body.hidden_scheme_rejected,
+            exit_code: body.exit_code,
+            success: body.success,
+            stdout_log: &body.stdout_log,
+            stdout_hash: &body.stdout_hash,
+            stderr_log: &body.stderr_log,
+            stderr_hash: &body.stderr_hash,
+            started_at: &body.started_at,
+            finished_at: &body.finished_at,
+            runtime_version: &body.runtime_version,
+        },
+    )?))
+}
+
 fn legacy_run_receipt_body_bytes(body: &crate::run::RunReceiptBody) -> Result<Option<Vec<u8>>> {
     if body.authority_enforced_for_service
+        || !body.actual_args.is_empty()
         || body.production_arbitrary_service
         || body.open_executable_before_restriction
         || body.open_declared_preopens_before_restriction
@@ -1005,6 +1085,7 @@ mod tests {
             capsule_version: "0.1.0".to_string(),
             command: "/app/bin/status-test".to_string(),
             args: Vec::new(),
+            actual_args: Vec::new(),
             authority_enforced: false,
             authority_mode: crate::run::RunAuthorityMode::SmokeUnenforced,
             authority_enforced_for_service: false,
@@ -1068,6 +1149,60 @@ mod tests {
                 runtime_version: &body.runtime_version,
             })
             .unwrap(),
+        );
+        let receipt = crate::run::RunReceipt {
+            receipt_version: 1,
+            event: "capsule_run".to_string(),
+            body,
+            body_hash: legacy_body_hash,
+            signature: None,
+        };
+
+        verify_run_receipt_integrity(&receipt).unwrap();
+    }
+
+    #[test]
+    fn legacy_run_receipt_hash_without_actual_args_is_accepted() {
+        let log_dir = TempDir::new().unwrap();
+        let stdout_log = log_dir.path().join("stdout.log");
+        let stderr_log = log_dir.path().join("stderr.log");
+        fs::write(&stdout_log, b"fd stdout\n").unwrap();
+        fs::write(&stderr_log, b"").unwrap();
+
+        let body = crate::run::RunReceiptBody {
+            capsule_name: "status-test".to_string(),
+            capsule_version: "0.1.0".to_string(),
+            command: "/app/bin/status-test".to_string(),
+            args: vec!["--authority-self-test".to_string()],
+            actual_args: Vec::new(),
+            authority_enforced: true,
+            authority_mode: crate::run::RunAuthorityMode::RedoxEnforcedCapsuleEntrypoint,
+            authority_enforced_for_service: true,
+            production_arbitrary_service: false,
+            open_executable_before_restriction: true,
+            open_declared_preopens_before_restriction: true,
+            entered_restricted_namespace: true,
+            exec_from_fd_attempted: true,
+            exec_from_fd_succeeded: true,
+            allowed_preopen_read: true,
+            denied_file_path: "/home/denied".to_string(),
+            denied_file_rejected: true,
+            hidden_scheme_path: "/scheme/tcp".to_string(),
+            hidden_scheme_rejected: true,
+            exit_code: Some(0),
+            success: true,
+            stdout_log: stdout_log.display().to_string(),
+            stdout_hash: hash_bytes(b"fd stdout\n"),
+            stderr_log: stderr_log.display().to_string(),
+            stderr_hash: hash_bytes(b""),
+            started_at: "unix:1".to_string(),
+            finished_at: "unix:2".to_string(),
+            runtime_version: "0.1.0".to_string(),
+        };
+        let legacy_body_hash = hash_bytes(
+            &run_receipt_body_without_actual_args_bytes(&body)
+                .unwrap()
+                .unwrap(),
         );
         let receipt = crate::run::RunReceipt {
             receipt_version: 1,
