@@ -7,6 +7,7 @@ use cocoon_bundle::SignatureMetadata;
 use cocoon_core::{CapsuleManifest, CapsuleName, GuestPath, hash_bytes};
 
 use crate::authority::run_redox_capsule_fd_launch_backend;
+use crate::fsutil::atomic_write;
 use crate::install::acquire_capsule_lock;
 use crate::receipt::{ReceiptSigningOptions, sign_receipt_body};
 use crate::{Result, RuntimeError};
@@ -539,12 +540,10 @@ fn write_run_receipt(capsule_root: &Path, run_id: &str, receipt: &RunReceipt) ->
     fs::create_dir_all(&receipts_root)?;
     let bytes = serde_json::to_vec_pretty(receipt)?;
 
-    fs::write(receipts_root.join(format!("{run_id}.json")), &bytes)?;
+    atomic_write(&receipts_root.join(format!("{run_id}.json")), &bytes)?;
 
     let latest = receipts_root.join("latest.json");
-    let latest_tmp = receipts_root.join("latest.json.tmp");
-    fs::write(&latest_tmp, bytes)?;
-    fs::rename(latest_tmp, latest)?;
+    atomic_write(&latest, &bytes)?;
     Ok(())
 }
 

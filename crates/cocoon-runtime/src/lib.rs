@@ -9,6 +9,7 @@
 //! instead of claiming runtime isolation.
 
 pub mod authority;
+mod fsutil;
 pub mod install;
 pub mod plan;
 pub mod receipt;

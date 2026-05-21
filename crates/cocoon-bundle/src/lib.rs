@@ -35,16 +35,41 @@ impl<R> CountingReader<R> {
 
 impl<R: std::io::Read> std::io::Read for CountingReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.inner.read(buf)?;
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if self.count >= self.limit {
+            if self.count > self.limit {
+                return Err(limit_exceeded(self.limit));
+            }
+            let mut byte = [0u8; 1];
+            return match self.inner.read(&mut byte)? {
+                0 => Ok(0),
+                _ => {
+                    self.count += 1;
+                    Err(limit_exceeded(self.limit))
+                }
+            };
+        }
+
+        let remaining = self.limit - self.count;
+        let max_read = buf
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let n = self.inner.read(&mut buf[..max_read])?;
         self.count += n as u64;
         if self.count > self.limit {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("decompressed data exceeds maximum of {} bytes", self.limit),
-            ));
+            return Err(limit_exceeded(self.limit));
         }
         Ok(n)
     }
+}
+
+fn limit_exceeded(limit: u64) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("decompressed data exceeds maximum of {limit} bytes"),
+    )
 }
 
 pub const COCOON_EXTENSION: &str = "cocoon";
@@ -59,6 +84,8 @@ const SIGNING_CONTEXT: &[u8] = b"cocoon-bundle-signature-v1";
 
 /// Maximum total uncompressed bundle size (100 MB).
 pub const MAX_BUNDLE_SIZE: u64 = 100 * 1024 * 1024;
+/// Maximum decompressed tar stream size, including headers, padding, and metadata.
+pub const MAX_ARCHIVE_DECOMPRESSED_SIZE: u64 = MAX_BUNDLE_SIZE + 64 * 1024 * 1024;
 /// Maximum number of files in a bundle.
 pub const MAX_FILE_COUNT: usize = 10_000;
 /// Maximum size of a single file in a bundle (10 MB).
@@ -167,6 +194,7 @@ impl BundleBuilder {
 
     fn collect_entries(&mut self) -> Result<()> {
         let mut seen = BTreeSet::new();
+        let mut total_size = 0u64;
         for entry in walkdir::WalkDir::new(&self.source_dir).same_file_system(true) {
             let entry = entry.map_err(|err| {
                 CocoonError::Bundle(format!(
@@ -174,6 +202,16 @@ impl BundleBuilder {
                     self.source_dir.display()
                 ))
             })?;
+            if entry.file_type().is_symlink() {
+                let path = entry.path().to_path_buf();
+                let rel = path.strip_prefix(&self.source_dir).map_err(|err| {
+                    CocoonError::Bundle(format!("cannot relativize bundle path: {err}"))
+                })?;
+                let archive_path = archive_path_to_key(rel)?;
+                return Err(CocoonError::Bundle(format!(
+                    "source path '{archive_path}' is a symbolic link and cannot be bundled"
+                )));
+            }
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -197,18 +235,28 @@ impl BundleBuilder {
                     "duplicate source archive path '{archive_path}'"
                 )));
             }
-
-            let content = fs::read(&path)?;
-            let hash = hash_bytes(&content);
-            let mode = file_mode(&path)?;
-
-            // Reject symlinks in source to prevent packing unintended targets.
-            #[cfg(unix)]
-            if fs::symlink_metadata(&path)?.file_type().is_symlink() {
+            if self.entries.len() >= MAX_FILE_COUNT {
                 return Err(CocoonError::Bundle(format!(
-                    "source path '{archive_path}' is a symbolic link and cannot be bundled"
+                    "bundle contains more than maximum of {MAX_FILE_COUNT} files"
                 )));
             }
+
+            let metadata_size = fs::metadata(&path)?.len();
+            validate_file_size(&archive_path, metadata_size)?;
+            let projected_total = total_size.checked_add(metadata_size).ok_or_else(|| {
+                CocoonError::Bundle("bundle uncompressed size overflowed u64".to_string())
+            })?;
+            validate_total_size(projected_total)?;
+
+            let content = read_file_limited(&path, &archive_path)?;
+            let size = content.len() as u64;
+            validate_file_size(&archive_path, size)?;
+            total_size = total_size.checked_add(size).ok_or_else(|| {
+                CocoonError::Bundle("bundle uncompressed size overflowed u64".to_string())
+            })?;
+            validate_total_size(total_size)?;
+            let hash = hash_bytes(&content);
+            let mode = file_mode(&path)?;
             self.entries.push(BundleEntry {
                 path,
                 archive_path,
@@ -257,21 +305,41 @@ impl BundleBuilder {
         let mut total_size = 0u64;
         for entry in &self.entries {
             let size = entry.content.len() as u64;
-            if size > MAX_FILE_SIZE {
-                return Err(CocoonError::Bundle(format!(
-                    "file '{}' is {} bytes, exceeding maximum of {MAX_FILE_SIZE}",
-                    entry.archive_path, size
-                )));
-            }
-            total_size += size;
+            validate_file_size(&entry.archive_path, size)?;
+            total_size = total_size.checked_add(size).ok_or_else(|| {
+                CocoonError::Bundle("bundle uncompressed size overflowed u64".to_string())
+            })?;
         }
-        if total_size > MAX_BUNDLE_SIZE {
-            return Err(CocoonError::Bundle(format!(
-                "bundle uncompressed size is {total_size} bytes, exceeding maximum of {MAX_BUNDLE_SIZE}"
-            )));
-        }
+        validate_total_size(total_size)?;
         Ok(())
     }
+}
+
+fn validate_file_size(archive_path: &str, size: u64) -> Result<()> {
+    if size > MAX_FILE_SIZE {
+        return Err(CocoonError::Bundle(format!(
+            "file '{archive_path}' is {size} bytes, exceeding maximum of {MAX_FILE_SIZE}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_total_size(total_size: u64) -> Result<()> {
+    if total_size > MAX_BUNDLE_SIZE {
+        return Err(CocoonError::Bundle(format!(
+            "bundle uncompressed size is {total_size} bytes, exceeding maximum of {MAX_BUNDLE_SIZE}"
+        )));
+    }
+    Ok(())
+}
+
+fn read_file_limited(path: &Path, archive_path: &str) -> Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let mut reader = file.take(MAX_FILE_SIZE + 1);
+    let mut content = Vec::new();
+    reader.read_to_end(&mut content)?;
+    validate_file_size(archive_path, content.len() as u64)?;
+    Ok(content)
 }
 
 fn append_file<W: std::io::Write>(
@@ -484,7 +552,7 @@ impl VerifiedBundle {
 
 impl BundleReader {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let gz = GzDecoder::new(CountingReader::new(bytes, MAX_BUNDLE_SIZE + MAX_FILE_SIZE));
+        let gz = CountingReader::new(GzDecoder::new(bytes), MAX_ARCHIVE_DECOMPRESSED_SIZE);
         let mut archive = tar::Archive::new(gz);
         let mut entries = BTreeMap::new();
         let mut total_size: u64 = 0;
@@ -542,6 +610,9 @@ impl BundleReader {
             entry.read_to_end(&mut content)?;
             entries.insert(archive_path, ArchiveEntry { content, mode });
         }
+
+        let mut gz = archive.into_inner();
+        std::io::copy(&mut gz, &mut std::io::sink())?;
 
         let manifest = parse_manifest(&entries)?;
         let hash_manifest = parse_hash_manifest(&entries)?;
@@ -1090,6 +1161,102 @@ cmd = "/app/bin/test"
             .unwrap_err();
 
         assert!(err.to_string().contains("without executable mode"));
+    }
+
+    #[test]
+    fn builds_with_trailing_slash_filesystem_root() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::create_dir_all(src.join("bin")).unwrap();
+        fs::write(
+            src.join("Cocoon.toml"),
+            r#"
+[capsule]
+name = "test"
+version = "0.1.0"
+
+[entry]
+cmd = "/app/bin/test"
+
+[filesystem]
+root = "/app/"
+"#,
+        )
+        .unwrap();
+        write_executable(src.join("bin/test"), b"#!/bin/sh\n").unwrap();
+
+        BundleBuilder::new(&src).unwrap().build().unwrap();
+    }
+
+    #[test]
+    fn rejects_oversized_source_file_before_full_read() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::create_dir_all(src.join("bin")).unwrap();
+        fs::write(
+            src.join("Cocoon.toml"),
+            r#"
+[capsule]
+name = "test"
+version = "0.1.0"
+
+[entry]
+cmd = "/app/bin/test"
+"#,
+        )
+        .unwrap();
+        write_executable(src.join("bin/test"), b"#!/bin/sh\n").unwrap();
+        let large = fs::File::create(src.join("large.bin")).unwrap();
+        large.set_len(MAX_FILE_SIZE + 1).unwrap();
+
+        let err = BundleBuilder::new(&src)
+            .and_then(BundleBuilder::build)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("exceeding maximum"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_source_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::create_dir_all(src.join("bin")).unwrap();
+        fs::write(
+            src.join("Cocoon.toml"),
+            r#"
+[capsule]
+name = "test"
+version = "0.1.0"
+
+[entry]
+cmd = "/app/bin/test"
+"#,
+        )
+        .unwrap();
+        write_executable(src.join("bin/test"), b"#!/bin/sh\n").unwrap();
+        symlink(src.join("bin/test"), src.join("linked-test")).unwrap();
+
+        let err = BundleBuilder::new(&src)
+            .and_then(BundleBuilder::build)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("symbolic link"));
+    }
+
+    #[test]
+    fn counting_reader_rejects_bytes_beyond_limit() {
+        let mut reader = CountingReader::new(&b"abcd"[..], 3);
+        let mut out = [0u8; 8];
+
+        assert_eq!(reader.read(&mut out).unwrap(), 3);
+        let err = reader.read(&mut out).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

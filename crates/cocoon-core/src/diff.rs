@@ -1,4 +1,4 @@
-use crate::capability::{PermissionAction, PermissionRule};
+use crate::capability::{PermissionAction, PermissionEffect, PermissionRule};
 use crate::manifest::{
     CapsuleManifest, NetworkDefault, PreopenConfig, PreopenRight, SchemeConfig, SchemeVisibility,
 };
@@ -68,8 +68,8 @@ impl AuthorityDiff {
 }
 
 pub fn diff_permissions(old: &CapsuleManifest, new: &CapsuleManifest) -> PermissionDiff {
-    let old_permissions = sorted_allowed_permissions(old);
-    let new_permissions = sorted_allowed_permissions(new);
+    let old_permissions = sorted_permissions(old);
+    let new_permissions = sorted_permissions(new);
     let mut added = Vec::new();
     let mut removed = Vec::new();
     let mut modified = Vec::new();
@@ -158,11 +158,8 @@ where
     }
 }
 
-fn sorted_allowed_permissions(manifest: &CapsuleManifest) -> Vec<PermissionRule> {
-    let mut permissions = manifest
-        .allowed_permissions()
-        .cloned()
-        .collect::<Vec<PermissionRule>>();
+fn sorted_permissions(manifest: &CapsuleManifest) -> Vec<PermissionRule> {
+    let mut permissions = manifest.permissions.clone();
     permissions.sort();
     permissions
 }
@@ -191,21 +188,61 @@ pub fn severity_of_diff(diff: &PermissionDiff) -> Vec<(Severity, String)> {
     let mut out = Vec::new();
 
     for permission in &diff.added {
-        let severity = severity_for_permission(permission);
+        let severity = added_permission_severity(permission);
         out.push((severity, format!("new permission: {permission}")));
     }
 
     for (old, new) in &diff.modified {
-        let severity = if action_expanded(old.action, new.action) {
-            severity_for_permission(new)
+        let severity = if permission_change_expanded(old, new) {
+            permission_expansion_severity(old, new)
         } else {
             Severity::Low
         };
         out.push((severity, format!("modified permission: {old} -> {new}")));
     }
 
+    for permission in &diff.removed {
+        let severity = removed_permission_severity(permission);
+        out.push((severity, format!("removed permission: {permission}")));
+    }
+
     out.sort_by(|a, b| b.0.cmp(&a.0));
     out
+}
+
+pub fn added_permission_severity(permission: &PermissionRule) -> Severity {
+    if permission.effect == PermissionEffect::Allow {
+        severity_for_permission(permission)
+    } else {
+        Severity::Low
+    }
+}
+
+pub fn removed_permission_severity(permission: &PermissionRule) -> Severity {
+    if permission.effect == PermissionEffect::Deny {
+        severity_for_permission(permission)
+    } else {
+        Severity::Low
+    }
+}
+
+pub fn permission_change_expanded(old: &PermissionRule, new: &PermissionRule) -> bool {
+    match (old.effect, new.effect) {
+        (PermissionEffect::Allow, PermissionEffect::Allow) => {
+            action_expanded(old.action, new.action)
+        }
+        (PermissionEffect::Deny, PermissionEffect::Deny) => action_expanded(new.action, old.action),
+        (PermissionEffect::Deny, PermissionEffect::Allow) => true,
+        (PermissionEffect::Allow, PermissionEffect::Deny) => false,
+    }
+}
+
+pub fn permission_expansion_severity(old: &PermissionRule, new: &PermissionRule) -> Severity {
+    match (old.effect, new.effect) {
+        (PermissionEffect::Deny, PermissionEffect::Deny) => severity_for_permission(old),
+        (PermissionEffect::Deny, PermissionEffect::Allow) => severity_for_permission(new),
+        _ => severity_for_permission(new),
+    }
 }
 
 pub fn severity_for_permission(permission: &PermissionRule) -> Severity {
@@ -377,7 +414,7 @@ target = "api.example.com:443"
     }
 
     #[test]
-    fn deny_rules_do_not_create_permission_expansion() {
+    fn diff_tracks_deny_rules_without_treating_addition_as_expansion() {
         let old = CapsuleManifest::from_toml(
             r#"
 [capsule]
@@ -408,7 +445,45 @@ target = "*"
         .unwrap();
         let diff = diff_permissions(&old, &new);
 
-        assert!(diff.is_empty());
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].effect, crate::PermissionEffect::Deny);
+        assert_eq!(severity_of_diff(&diff)[0].0, Severity::Low);
+    }
+
+    #[test]
+    fn removed_deny_rule_is_permission_expansion() {
+        let old = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "a"
+version = "1.0.0"
+
+[entry]
+cmd = "/app/bin/a"
+
+[[permission]]
+effect = "deny"
+scheme = "tcp"
+action = "connect"
+target = "*"
+"#,
+        )
+        .unwrap();
+        let new = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "a"
+version = "2.0.0"
+
+[entry]
+cmd = "/app/bin/a"
+"#,
+        )
+        .unwrap();
+        let diff = diff_permissions(&old, &new);
+
+        assert_eq!(diff.removed.len(), 1);
+        assert_eq!(severity_of_diff(&diff)[0].0, Severity::High);
     }
 
     #[test]

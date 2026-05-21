@@ -85,7 +85,7 @@ pub fn build_diff_report(diff: &PermissionDiff, policy: &UpdatePolicy) -> Permis
         .added
         .iter()
         .map(|permission| PermissionChange {
-            severity: cocoon_core::severity_for_permission(permission),
+            severity: cocoon_core::added_permission_severity(permission),
             kind: PermissionChangeKind::Added,
             before: None,
             after: Some(permission.clone()),
@@ -96,8 +96,8 @@ pub fn build_diff_report(diff: &PermissionDiff, policy: &UpdatePolicy) -> Permis
         .modified
         .iter()
         .map(|(before, after)| {
-            let severity = if cocoon_core::permission_action_expanded(before.action, after.action) {
-                cocoon_core::severity_for_permission(after)
+            let severity = if cocoon_core::permission_change_expanded(before, after) {
+                cocoon_core::permission_expansion_severity(before, after)
             } else {
                 Severity::Low
             };
@@ -114,7 +114,7 @@ pub fn build_diff_report(diff: &PermissionDiff, policy: &UpdatePolicy) -> Permis
         .removed
         .iter()
         .map(|permission| PermissionChange {
-            severity: Severity::Low,
+            severity: cocoon_core::removed_permission_severity(permission),
             kind: PermissionChangeKind::Removed,
             before: Some(permission.clone()),
             after: None,
@@ -125,6 +125,7 @@ pub fn build_diff_report(diff: &PermissionDiff, policy: &UpdatePolicy) -> Permis
         && added
             .iter()
             .chain(modified.iter())
+            .chain(removed.iter())
             .any(|change| change.severity >= policy.confirmation_threshold);
 
     PermissionDiffReport {
@@ -553,6 +554,30 @@ mod tests {
     }
 
     #[test]
+    fn added_deny_rule_does_not_require_confirmation() {
+        let diff = PermissionDiff {
+            added: vec![tcp_deny_permission()],
+            removed: Vec::new(),
+            modified: Vec::new(),
+        };
+        let policy = UpdatePolicy::default();
+
+        assert!(!requires_confirmation(&diff, &policy));
+    }
+
+    #[test]
+    fn removed_deny_rule_requires_confirmation() {
+        let diff = PermissionDiff {
+            added: Vec::new(),
+            removed: vec![tcp_deny_permission()],
+            modified: Vec::new(),
+        };
+        let policy = UpdatePolicy::default();
+
+        assert!(requires_confirmation(&diff, &policy));
+    }
+
+    #[test]
     fn formats_grouped_report() {
         let diff = PermissionDiff {
             added: vec![tcp_permission()],
@@ -620,6 +645,15 @@ visibility = "readwrite"
             scheme: cocoon_core::SchemeName::parse("tcp").unwrap(),
             action: cocoon_core::PermissionAction::Connect,
             target: cocoon_core::PermissionTarget::parse("api.example.com:443").unwrap(),
+        }
+    }
+
+    fn tcp_deny_permission() -> cocoon_core::PermissionRule {
+        cocoon_core::PermissionRule {
+            effect: cocoon_core::PermissionEffect::Deny,
+            scheme: cocoon_core::SchemeName::parse("tcp").unwrap(),
+            action: cocoon_core::PermissionAction::Connect,
+            target: cocoon_core::PermissionTarget::parse("*").unwrap(),
         }
     }
 

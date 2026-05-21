@@ -32,7 +32,7 @@ pub fn hash_is_current(hash: &str) -> bool {
 }
 
 pub fn hash_manifest(manifest: &crate::CapsuleManifest) -> crate::Result<String> {
-    let text = toml::to_string(manifest)?;
+    let text = manifest.to_toml_pretty()?;
     Ok(hash_bytes(text.as_bytes()))
 }
 
@@ -43,4 +43,31 @@ pub fn hash_permissions(manifest: &crate::CapsuleManifest) -> String {
 
 pub fn hash_capabilities(manifest: &crate::CapsuleManifest) -> String {
     hash_permissions(manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CapsuleManifest;
+
+    #[test]
+    fn manifest_hash_uses_pretty_toml_canonicalization() {
+        let manifest = CapsuleManifest::from_toml(
+            r#"
+[capsule]
+name = "test"
+version = "0.1.0"
+
+[entry]
+cmd = "/app/bin/test"
+"#,
+        )
+        .unwrap();
+        let pretty = manifest.to_toml_pretty().unwrap();
+
+        assert_eq!(
+            hash_manifest(&manifest).unwrap(),
+            hash_bytes(pretty.as_bytes())
+        );
+    }
 }

@@ -20,6 +20,8 @@ use cocoon_core::{CapsuleManifest, SchemeVisibility};
 use cocoon_core::{GuestPath, PermissionEffect, PreopenRight};
 
 #[cfg(target_os = "redox")]
+use crate::fsutil::atomic_write;
+#[cfg(target_os = "redox")]
 use crate::install::acquire_capsule_lock;
 use crate::receipt::ReceiptSigningOptions;
 #[cfg(target_os = "redox")]
@@ -1744,12 +1746,10 @@ fn write_authority_probe_receipt(
     let receipts_root = capsule_root.join("receipts").join("authority");
     fs::create_dir_all(&receipts_root)?;
     let bytes = serde_json::to_vec_pretty(receipt)?;
-    fs::write(receipts_root.join(format!("{run_id}.json")), &bytes)?;
+    atomic_write(&receipts_root.join(format!("{run_id}.json")), &bytes)?;
 
     let latest = receipts_root.join("latest.json");
-    let latest_tmp = receipts_root.join("latest.json.tmp");
-    fs::write(&latest_tmp, bytes)?;
-    fs::rename(latest_tmp, latest)?;
+    atomic_write(&latest, &bytes)?;
     Ok(())
 }
 
@@ -1762,12 +1762,10 @@ fn write_capsule_fd_launch_probe_receipt(
     let receipts_root = capsule_root.join("receipts").join("capsule-fd-launch");
     fs::create_dir_all(&receipts_root)?;
     let bytes = serde_json::to_vec_pretty(receipt)?;
-    fs::write(receipts_root.join(format!("{run_id}.json")), &bytes)?;
+    atomic_write(&receipts_root.join(format!("{run_id}.json")), &bytes)?;
 
     let latest = receipts_root.join("latest.json");
-    let latest_tmp = receipts_root.join("latest.json.tmp");
-    fs::write(&latest_tmp, bytes)?;
-    fs::rename(latest_tmp, latest)?;
+    atomic_write(&latest, &bytes)?;
     Ok(())
 }
 
@@ -1780,12 +1778,10 @@ fn write_fd_launch_probe_receipt(
     let receipts_root = capsule_root.join("receipts").join("fd-launch");
     fs::create_dir_all(&receipts_root)?;
     let bytes = serde_json::to_vec_pretty(receipt)?;
-    fs::write(receipts_root.join(format!("{run_id}.json")), &bytes)?;
+    atomic_write(&receipts_root.join(format!("{run_id}.json")), &bytes)?;
 
     let latest = receipts_root.join("latest.json");
-    let latest_tmp = receipts_root.join("latest.json.tmp");
-    fs::write(&latest_tmp, bytes)?;
-    fs::rename(latest_tmp, latest)?;
+    atomic_write(&latest, &bytes)?;
     Ok(())
 }
 

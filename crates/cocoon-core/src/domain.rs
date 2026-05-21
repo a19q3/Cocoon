@@ -146,7 +146,7 @@ impl GuestPath {
     pub fn parse(raw: impl Into<String>) -> crate::Result<Self> {
         let raw = raw.into();
         validate_absolute_path(&raw, "guest path")?;
-        Ok(Self(raw))
+        Ok(Self(normalize_path(&raw)))
     }
 
     pub fn as_str(&self) -> &str {
@@ -453,5 +453,14 @@ mod tests {
 
         assert!(root.contains(&child));
         assert!(!root.contains(&sibling));
+    }
+
+    #[test]
+    fn normalizes_guest_path_trailing_slash() {
+        let root = GuestPath::parse("/app/").unwrap();
+        let child = GuestPath::parse("/app/bin/service").unwrap();
+
+        assert_eq!(root.as_str(), "/app");
+        assert!(root.contains(&child));
     }
 }

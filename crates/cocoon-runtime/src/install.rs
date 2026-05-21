@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cocoon_bundle::{BundleReader, SignatureMetadata, VerificationIssue, VerificationPolicy};
 use cocoon_core::{CapsuleName, CapsuleVersion, hash_bytes, hash_permissions};
 
+use crate::fsutil::atomic_write;
 use crate::receipt::{ReceiptSigningOptions, sign_receipt_body, verify_receipt_signature};
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
@@ -525,12 +526,10 @@ fn write_receipts(
     let bytes = serde_json::to_vec_pretty(receipt)?;
 
     let version_receipt = receipts_root.join(format!("{capsule_version}.json"));
-    fs::write(&version_receipt, &bytes)?;
+    atomic_write(&version_receipt, &bytes)?;
 
     let latest = receipts_root.join("latest.json");
-    let latest_tmp = receipts_root.join("latest.json.tmp");
-    fs::write(&latest_tmp, bytes)?;
-    fs::rename(latest_tmp, latest)?;
+    atomic_write(&latest, &bytes)?;
     Ok(())
 }
 
@@ -570,12 +569,10 @@ fn write_rollback_receipt(capsule_root: &Path, receipt: &RollbackReceipt) -> Res
         receipt.body.target_version
     );
 
-    fs::write(receipts_root.join(receipt_name), &bytes)?;
+    atomic_write(&receipts_root.join(receipt_name), &bytes)?;
 
     let latest = receipts_root.join("latest.json");
-    let latest_tmp = receipts_root.join("latest.json.tmp");
-    fs::write(&latest_tmp, bytes)?;
-    fs::rename(latest_tmp, latest)?;
+    atomic_write(&latest, &bytes)?;
     Ok(())
 }
 
