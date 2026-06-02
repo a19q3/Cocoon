@@ -16,7 +16,7 @@ tracing = { workspace = true }
 [target.'cfg(target_os = "redox")'.dependencies]
 ioslice = "0.6"
 libc = "0.2"
-libredox = { version = "0.1.10", features = ["mkns"] }
+libredox = { version = "0.1.17", features = ["mkns"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
