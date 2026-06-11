@@ -1,0 +1,53 @@
+name: Cocoon CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: Host and Redox target gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-redox
+
+      - name: Run local production-readiness gate
+        run: cargo xtask prod-gate
+
+  redoxer-qemu:
+    name: Required Redoxer/QEMU gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-redox
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+
+      - name: Install Redoxer
+        run: cargo install redoxer
+
+      - name: Initialise Redoxer toolchain
+        run: redoxer toolchain
+
+      - name: Run Redoxer-backed production-readiness gate
+        run: cargo xtask redox-qemu-gate

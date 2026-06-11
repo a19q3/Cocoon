@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cocoon_bundle::{BundleReader, SignatureMetadata, VerificationIssue, VerificationPolicy};
-use cocoon_core::{CapsuleName, CapsuleVersion, hash_bytes, hash_permissions};
+use cocoon_core::{
+    CapsuleManifest, CapsuleName, CapsuleVersion, diff_authority, hash_bytes, hash_permissions,
+};
 
 use crate::fsutil::atomic_write;
 use crate::receipt::{ReceiptSigningOptions, sign_receipt_body, verify_receipt_signature};
@@ -48,6 +50,9 @@ pub enum RuntimeError {
     #[error("installed tree integrity failed: {0}")]
     InstalledIntegrity(String),
 
+    #[error("permission expansion requires confirmation:\n{0}")]
+    PermissionExpansionRequiresConfirmation(String),
+
     #[error("runtime authority enforcement unavailable: {0}")]
     UnenforcedAuthority(String),
 
@@ -56,6 +61,15 @@ pub enum RuntimeError {
 
     #[error("receipt audit failed: {0}")]
     ReceiptAudit(String),
+
+    #[error("service is already running: {0}")]
+    ServiceAlreadyRunning(String),
+
+    #[error("service is not running: {0}")]
+    ServiceNotRunning(String),
+
+    #[error("service supervisor failed: {0}")]
+    ServiceSupervisor(String),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -73,11 +87,22 @@ pub struct InstallReceiptBody {
     pub capsule_version: String,
     pub manifest_hash: String,
     pub bundle_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_identity: Option<PayloadIdentity>,
     pub permission_hash: String,
     pub installed_at: String,
     pub install_root: String,
     pub runtime_version: String,
     pub previous_receipt: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct PayloadIdentity {
+    pub layer: String,
+    pub name: String,
+    pub version: String,
+    pub digest: String,
+    pub verifier: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -105,6 +130,16 @@ pub struct RecoveryReport {
     pub removed_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryAllReport {
+    pub recovered: Vec<RecoveryReport>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InstallOptions {
+    pub allow_permission_expansion: bool,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RecoveryOptions {
     pub break_lock: bool,
@@ -117,6 +152,20 @@ pub struct RecoveryOptions {
 /// The current version pointer and receipt are written only after staging succeeds.
 pub fn install_capsule(capsule_path: &Path, install_root: &Path) -> Result<InstallReceipt> {
     install_capsule_with_policy(capsule_path, install_root, VerificationPolicy::default())
+}
+
+pub fn install_capsule_with_options(
+    capsule_path: &Path,
+    install_root: &Path,
+    options: InstallOptions,
+) -> Result<InstallReceipt> {
+    install_capsule_with_options_policy_and_receipt_signing(
+        capsule_path,
+        install_root,
+        VerificationPolicy::default(),
+        ReceiptSigningOptions::default(),
+        options,
+    )
 }
 
 pub fn install_capsule_with_policy(
@@ -137,6 +186,22 @@ pub fn install_capsule_with_policy_and_receipt_signing(
     install_root: &Path,
     policy: VerificationPolicy,
     receipt_signing: ReceiptSigningOptions,
+) -> Result<InstallReceipt> {
+    install_capsule_with_options_policy_and_receipt_signing(
+        capsule_path,
+        install_root,
+        policy,
+        receipt_signing,
+        InstallOptions::default(),
+    )
+}
+
+pub fn install_capsule_with_options_policy_and_receipt_signing(
+    capsule_path: &Path,
+    install_root: &Path,
+    policy: VerificationPolicy,
+    receipt_signing: ReceiptSigningOptions,
+    options: InstallOptions,
 ) -> Result<InstallReceipt> {
     let bytes = fs::read(capsule_path)?;
     let reader = BundleReader::from_bytes(&bytes)?;
@@ -161,6 +226,7 @@ pub fn install_capsule_with_policy_and_receipt_signing(
             "{capsule_name} {capsule_version}"
         )));
     }
+    enforce_permission_expansion_policy(&capsule_root, &reader.manifest, options)?;
 
     fs::create_dir_all(&versions_root)?;
     let staging_dir = staging_dir(install_root, &capsule_name, &capsule_version)?;
@@ -257,6 +323,35 @@ pub fn recover_capsule(capsule_name: &CapsuleName, install_root: &Path) -> Resul
     recover_capsule_with_options(capsule_name, install_root, RecoveryOptions::default())
 }
 
+pub fn recover_all_capsules(install_root: &Path) -> Result<RecoveryAllReport> {
+    let capsules_root = install_root.join("capsules");
+    let mut capsule_names = Vec::new();
+    match fs::read_dir(&capsules_root) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry?;
+                if !entry.file_type()?.is_dir() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let Ok(capsule_name) = CapsuleName::parse(name) else {
+                    continue;
+                };
+                capsule_names.push(capsule_name);
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    capsule_names.sort();
+
+    let mut recovered = Vec::new();
+    for capsule_name in capsule_names {
+        recovered.push(recover_capsule(&capsule_name, install_root)?);
+    }
+    Ok(RecoveryAllReport { recovered })
+}
+
 pub fn recover_capsule_with_options(
     capsule_name: &CapsuleName,
     install_root: &Path,
@@ -288,6 +383,7 @@ pub fn recover_capsule_with_options(
         capsule_root.join("current-version.tmp"),
         capsule_root.join("receipts/latest.json.tmp"),
         capsule_root.join("receipts/runs/latest.json.tmp"),
+        capsule_root.join("receipts/services/latest.json.tmp"),
         capsule_root.join("receipts/rollbacks/latest.json.tmp"),
     ];
     for path in temp_paths {
@@ -295,6 +391,9 @@ pub fn recover_capsule_with_options(
             remove_path_if_exists(&path)?;
             removed_paths.push(path.display().to_string());
         }
+    }
+    if let Some(path) = crate::supervisor::remove_stale_service_state(&capsule_root)? {
+        removed_paths.push(path.display().to_string());
     }
 
     removed_paths.sort();
@@ -358,6 +457,58 @@ fn read_current_version(capsule_root: &Path) -> Result<Option<String>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
+}
+
+fn read_current_manifest(capsule_root: &Path) -> Result<Option<CapsuleManifest>> {
+    let Some(current_version) = read_current_version(capsule_root)? else {
+        return Ok(None);
+    };
+    let manifest_path = capsule_root
+        .join("current")
+        .join(cocoon_bundle::MANIFEST_NAME);
+    let manifest_text = fs::read_to_string(&manifest_path).map_err(|error| {
+        RuntimeError::InstalledIntegrity(format!(
+            "current manifest for {current_version} cannot be read at '{}': {error}",
+            manifest_path.display()
+        ))
+    })?;
+    CapsuleManifest::from_toml(&manifest_text)
+        .map(Some)
+        .map_err(|error| {
+            RuntimeError::InstalledIntegrity(format!(
+                "current manifest for {current_version} is invalid: {error}"
+            ))
+        })
+}
+
+fn enforce_permission_expansion_policy(
+    capsule_root: &Path,
+    new_manifest: &CapsuleManifest,
+    options: InstallOptions,
+) -> Result<()> {
+    let Some(current_manifest) = read_current_manifest(capsule_root)? else {
+        return Ok(());
+    };
+    if !current_manifest
+        .update
+        .permission_expansion_requires_confirmation
+    {
+        return Ok(());
+    }
+
+    let diff = diff_authority(&current_manifest, new_manifest);
+    let policy = cocoon_policy::UpdatePolicy {
+        permission_expansion_requires_confirmation: true,
+        ..cocoon_policy::UpdatePolicy::default()
+    };
+    let report = cocoon_policy::build_authority_diff_report(&diff, &policy);
+    if !report.confirmation_required || options.allow_permission_expansion {
+        return Ok(());
+    }
+
+    Err(RuntimeError::PermissionExpansionRequiresConfirmation(
+        cocoon_policy::format_authority_report(&report),
+    ))
 }
 
 fn write_current_pointer(capsule_root: &Path, capsule_version: &str) -> Result<()> {
@@ -444,11 +595,13 @@ fn build_install_receipt(
     previous_receipt: Option<String>,
     receipt_signing: &ReceiptSigningOptions,
 ) -> Result<InstallReceipt> {
+    let bundle_hash = hash_bytes(bundle_bytes);
     let body = InstallReceiptBody {
         capsule_name: reader.manifest.capsule.name.to_string(),
         capsule_version: reader.manifest.capsule.version.to_string(),
         manifest_hash: reader.hash_manifest.manifest_hash.clone(),
-        bundle_hash: hash_bytes(bundle_bytes),
+        bundle_hash: bundle_hash.clone(),
+        payload_identity: Some(payload_identity_for_cocoon_bundle(reader, &bundle_hash)),
         permission_hash: hash_permissions(&reader.manifest),
         installed_at: format!("unix:{}", unix_seconds()?),
         install_root: version_dir.display().to_string(),
@@ -466,6 +619,16 @@ fn build_install_receipt(
         body_hash,
         signature,
     })
+}
+
+fn payload_identity_for_cocoon_bundle(reader: &BundleReader, bundle_hash: &str) -> PayloadIdentity {
+    PayloadIdentity {
+        layer: "cocoon-bundle".to_string(),
+        name: reader.manifest.capsule.name.to_string(),
+        version: reader.manifest.capsule.version.to_string(),
+        digest: bundle_hash.to_string(),
+        verifier: "cocoon-bundle hash manifest".to_string(),
+    }
 }
 
 fn previous_receipt_hash(capsule_root: &Path) -> Result<Option<String>> {
@@ -607,6 +770,16 @@ mod tests {
         assert_eq!(receipt.body.capsule_name, "install-test");
         assert_eq!(receipt.body.capsule_version, "0.1.0");
         assert_eq!(
+            receipt.body.payload_identity,
+            Some(PayloadIdentity {
+                layer: "cocoon-bundle".to_string(),
+                name: "install-test".to_string(),
+                version: "0.1.0".to_string(),
+                digest: receipt.body.bundle_hash.clone(),
+                verifier: "cocoon-bundle hash manifest".to_string(),
+            })
+        );
+        assert_eq!(
             receipt.body_hash,
             hash_bytes(&canonical_receipt_body_bytes(&receipt.body).unwrap())
         );
@@ -641,6 +814,194 @@ mod tests {
         let second = install_capsule(&second_capsule, install_root.path()).unwrap();
 
         assert_eq!(second.body.previous_receipt, Some(first.body_hash));
+    }
+
+    #[test]
+    fn legacy_install_receipt_hash_without_payload_identity_is_accepted() {
+        let body = InstallReceiptBody {
+            capsule_name: "install-test".to_string(),
+            capsule_version: "0.1.0".to_string(),
+            manifest_hash: "blake3:manifest".to_string(),
+            bundle_hash: "blake3:bundle".to_string(),
+            payload_identity: None,
+            permission_hash: "blake3:permission".to_string(),
+            installed_at: "unix:1".to_string(),
+            install_root: "/pkg/cocoon/capsules/install-test/versions/0.1.0".to_string(),
+            runtime_version: "0.1.0".to_string(),
+            previous_receipt: None,
+        };
+        let body_hash = hash_bytes(&canonical_receipt_body_bytes(&body).unwrap());
+        let legacy_json = format!(
+            r#"{{
+  "receipt_version": 1,
+  "event": "capsule_install",
+  "body": {{
+    "capsule_name": "install-test",
+    "capsule_version": "0.1.0",
+    "manifest_hash": "blake3:manifest",
+    "bundle_hash": "blake3:bundle",
+    "permission_hash": "blake3:permission",
+    "installed_at": "unix:1",
+    "install_root": "/pkg/cocoon/capsules/install-test/versions/0.1.0",
+    "runtime_version": "0.1.0",
+    "previous_receipt": null
+  }},
+  "body_hash": "{body_hash}",
+  "signature": null
+}}"#
+        );
+
+        let receipt: InstallReceipt = serde_json::from_str(&legacy_json).unwrap();
+
+        assert_eq!(receipt.body.payload_identity, None);
+        verify_install_receipt(&receipt).unwrap();
+    }
+
+    #[test]
+    fn permission_expansion_requires_explicit_install_option() {
+        let (_first_dir, first_capsule) = fixture_capsule("0.1.0");
+        let (_second_dir, second_capsule) = fixture_capsule_with_manifest(
+            "0.2.0",
+            r#"
+[[permission]]
+scheme = "tcp"
+action = "connect"
+target = "*"
+"#,
+        );
+        let install_root = TempDir::new().unwrap();
+        install_capsule(&first_capsule, install_root.path()).unwrap();
+
+        let error = install_capsule(&second_capsule, install_root.path()).unwrap_err();
+        let RuntimeError::PermissionExpansionRequiresConfirmation(report) = error else {
+            panic!("unexpected install error: {error}");
+        };
+        assert!(report.contains("Added permissions:"), "{report}");
+        assert!(report.contains("allow tcp connect *"), "{report}");
+        assert!(
+            !install_root
+                .path()
+                .join("capsules/install-test/versions/0.2.0")
+                .exists()
+        );
+
+        let receipt = install_capsule_with_options(
+            &second_capsule,
+            install_root.path(),
+            InstallOptions {
+                allow_permission_expansion: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(receipt.body.capsule_version, "0.2.0");
+        assert_eq!(
+            fs::read_to_string(
+                install_root
+                    .path()
+                    .join("capsules/install-test/current-version")
+            )
+            .unwrap()
+            .trim(),
+            "0.2.0"
+        );
+    }
+
+    #[test]
+    fn recover_removes_stale_service_state() {
+        let (_fixture_dir, capsule) = fixture_capsule("0.1.0");
+        let install_root = TempDir::new().unwrap();
+        install_capsule(&capsule, install_root.path()).unwrap();
+        let capsule_root = install_root.path().join("capsules/install-test");
+        let service_root = capsule_root.join("service");
+        fs::create_dir_all(&service_root).unwrap();
+        let state = crate::ServiceStateRecord {
+            capsule_name: "install-test".to_string(),
+            capsule_version: "0.1.0".to_string(),
+            pid: u32::MAX,
+            command: "/app/bin/install-test".to_string(),
+            args: Vec::new(),
+            actual_args: Vec::new(),
+            authority_enforced: false,
+            authority_mode: crate::RunAuthorityMode::SmokeUnenforced,
+            stdout_log: capsule_root
+                .join("logs/stale.stdout.log")
+                .display()
+                .to_string(),
+            stderr_log: capsule_root
+                .join("logs/stale.stderr.log")
+                .display()
+                .to_string(),
+            started_at: "unix:1".to_string(),
+            runtime_version: env!("CARGO_PKG_VERSION").to_string(),
+        };
+        let state_path = service_root.join("state.json");
+        fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+        let report = recover_capsule(
+            &CapsuleName::parse("install-test").unwrap(),
+            install_root.path(),
+        )
+        .unwrap();
+
+        assert!(!state_path.exists());
+        assert!(
+            report
+                .removed_paths
+                .iter()
+                .any(|path| path.ends_with("capsules/install-test/service/state.json")),
+            "{:?}",
+            report.removed_paths
+        );
+    }
+
+    #[test]
+    fn recover_all_removes_stale_service_state() {
+        let (_fixture_dir, capsule) = fixture_capsule("0.1.0");
+        let install_root = TempDir::new().unwrap();
+        install_capsule(&capsule, install_root.path()).unwrap();
+        let capsule_root = install_root.path().join("capsules/install-test");
+        let service_root = capsule_root.join("service");
+        fs::create_dir_all(&service_root).unwrap();
+        let state = crate::ServiceStateRecord {
+            capsule_name: "install-test".to_string(),
+            capsule_version: "0.1.0".to_string(),
+            pid: u32::MAX,
+            command: "/app/bin/install-test".to_string(),
+            args: Vec::new(),
+            actual_args: Vec::new(),
+            authority_enforced: false,
+            authority_mode: crate::RunAuthorityMode::SmokeUnenforced,
+            stdout_log: capsule_root
+                .join("logs/stale.stdout.log")
+                .display()
+                .to_string(),
+            stderr_log: capsule_root
+                .join("logs/stale.stderr.log")
+                .display()
+                .to_string(),
+            started_at: "unix:1".to_string(),
+            runtime_version: env!("CARGO_PKG_VERSION").to_string(),
+        };
+        let state_path = service_root.join("state.json");
+        let pid_path = service_root.join("pid");
+        fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+        fs::write(&pid_path, format!("{}\n", state.pid)).unwrap();
+
+        let report = recover_all_capsules(install_root.path()).unwrap();
+
+        assert_eq!(report.recovered.len(), 1);
+        assert_eq!(report.recovered[0].capsule_name, "install-test");
+        assert!(!state_path.exists());
+        assert!(!pid_path.exists());
+        assert!(
+            report.recovered[0]
+                .removed_paths
+                .iter()
+                .any(|path| path.ends_with("capsules/install-test/service/state.json")),
+            "{:?}",
+            report.recovered[0].removed_paths
+        );
     }
 
     #[test]
@@ -712,6 +1073,10 @@ mod tests {
     }
 
     fn fixture_capsule(version: &str) -> (TempDir, PathBuf) {
+        fixture_capsule_with_manifest(version, "")
+    }
+
+    fn fixture_capsule_with_manifest(version: &str, extra_manifest: &str) -> (TempDir, PathBuf) {
         let dir = TempDir::new().unwrap();
         let source = dir.path().join("src");
         fs::create_dir(&source).unwrap();
@@ -724,8 +1089,11 @@ version = "__VERSION__"
 
 [entry]
 cmd = "/app/bin/install-test"
+
+__EXTRA_MANIFEST__
 "#
-            .replace("__VERSION__", version),
+            .replace("__VERSION__", version)
+            .replace("__EXTRA_MANIFEST__", extra_manifest),
         )
         .unwrap();
         fs::create_dir_all(source.join("bin")).unwrap();

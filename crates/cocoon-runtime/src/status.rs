@@ -11,7 +11,7 @@ use crate::receipt::{
 use crate::run::verify_installed_capsule_unlocked;
 use crate::{
     AuthorityProbeReceipt, FdLaunchProbeReceipt, InstallReceipt, Result, RollbackReceipt,
-    RunReceipt, RuntimeError,
+    RunReceipt, RuntimeError, ServiceLifecycleReceipt, ServiceSupervisorStatus,
 };
 
 fn is_false(value: &bool) -> bool {
@@ -37,6 +37,7 @@ pub struct ServiceStatusReport {
     pub latest_fd_launch_probe_receipt: Option<FdLaunchProbeReceipt>,
     pub latest_capsule_fd_launch_probe_receipt: Option<FdLaunchProbeReceipt>,
     pub latest_rollback_receipt: Option<RollbackReceipt>,
+    pub service_supervisor: Option<ServiceSupervisorStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +82,7 @@ fn service_status_report_unlocked(
             latest_fd_launch_probe_receipt: None,
             latest_capsule_fd_launch_probe_receipt: None,
             latest_rollback_receipt: None,
+            service_supervisor: None,
         });
     }
     verify_installed_capsule_unlocked(capsule_name, install_root)?;
@@ -104,6 +106,9 @@ fn service_status_report_unlocked(
     let latest_rollback_receipt = read_optional_json::<RollbackReceipt>(
         &capsule_root.join("receipts/rollbacks/latest.json"),
     )?;
+    let service_supervisor = Some(crate::supervisor::service_supervisor_status_for_root(
+        &capsule_root,
+    )?);
     let state = match latest_run_receipt.as_ref() {
         Some(receipt) if receipt.body.success => ServiceState::LastRunSucceeded,
         Some(_) => ServiceState::LastRunFailed,
@@ -120,6 +125,7 @@ fn service_status_report_unlocked(
         latest_fd_launch_probe_receipt,
         latest_capsule_fd_launch_probe_receipt,
         latest_rollback_receipt,
+        service_supervisor,
     })
 }
 
@@ -358,6 +364,39 @@ pub fn audit_capsule_with_receipt_policy(
         )?;
     }
 
+    if let Some(supervisor) = status.service_supervisor.as_ref()
+        && let Some(receipt) = supervisor.latest_receipt.as_ref()
+    {
+        verify_service_lifecycle_receipt_with_policy(receipt, receipt_policy)?;
+        verify_latest_service_lifecycle_receipt_archive_with_policy(
+            &capsule_root,
+            receipt,
+            receipt_policy,
+        )?;
+        checks.push(AuditCheck {
+            name: "latest service lifecycle receipt body hash".to_string(),
+            detail: receipt.body_hash.clone(),
+        });
+        checks.push(AuditCheck {
+            name: "latest service lifecycle receipt archive link".to_string(),
+            detail: receipt.body_hash.clone(),
+        });
+        checks.push(AuditCheck {
+            name: "latest service lifecycle action".to_string(),
+            detail: receipt.body.action.to_string(),
+        });
+        checks.push(AuditCheck {
+            name: "latest service lifecycle success".to_string(),
+            detail: receipt.body.success.to_string(),
+        });
+        if let Some(public_key) = signature_public_key(&receipt.signature) {
+            checks.push(AuditCheck {
+                name: "latest service lifecycle receipt signature".to_string(),
+                detail: public_key.to_string(),
+            });
+        }
+    }
+
     if let Some(receipt) = status.latest_rollback_receipt.as_ref() {
         verify_rollback_receipt_with_policy(receipt, receipt_policy)?;
         verify_latest_rollback_receipt_archive_with_policy(&capsule_root, receipt, receipt_policy)?;
@@ -494,6 +533,11 @@ pub fn verify_status_report_integrity_with_receipt_policy(
     }
     if let Some(receipt) = status.latest_rollback_receipt.as_ref() {
         verify_rollback_receipt_with_policy(receipt, receipt_policy)?;
+    }
+    if let Some(supervisor) = status.service_supervisor.as_ref()
+        && let Some(receipt) = supervisor.latest_receipt.as_ref()
+    {
+        verify_service_lifecycle_receipt_with_policy(receipt, receipt_policy)?;
     }
     Ok(())
 }
@@ -920,6 +964,59 @@ fn verify_latest_fd_launch_probe_receipt_archive_with_policy(
         )));
     };
     verify_fd_launch_probe_receipt_with_policy(&archived, receipt_policy)?;
+    Ok(())
+}
+
+fn verify_service_lifecycle_receipt_with_policy(
+    receipt: &ServiceLifecycleReceipt,
+    receipt_policy: &ReceiptVerificationPolicy,
+) -> Result<()> {
+    let actual = hash_bytes(&serde_json::to_vec(&receipt.body)?);
+    if actual != receipt.body_hash {
+        return Err(RuntimeError::ReceiptAudit(format!(
+            "service lifecycle receipt body hash mismatch: expected {}, got {actual}",
+            receipt.body_hash
+        )));
+    }
+    verify_receipt_signature_with_policy(
+        &receipt.event,
+        &receipt.body,
+        &receipt.signature,
+        "service lifecycle",
+        receipt_policy,
+    )?;
+    if let Some(stdout_hash) = receipt.body.stdout_hash.as_ref() {
+        let stdout_log = receipt.body.stdout_log.as_deref().ok_or_else(|| {
+            RuntimeError::ReceiptAudit("service lifecycle stdout hash has no log path".to_string())
+        })?;
+        verify_log_hash(stdout_log, stdout_hash, "service lifecycle stdout")?;
+    }
+    if let Some(stderr_hash) = receipt.body.stderr_hash.as_ref() {
+        let stderr_log = receipt.body.stderr_log.as_deref().ok_or_else(|| {
+            RuntimeError::ReceiptAudit("service lifecycle stderr hash has no log path".to_string())
+        })?;
+        verify_log_hash(stderr_log, stderr_hash, "service lifecycle stderr")?;
+    }
+    Ok(())
+}
+
+fn verify_latest_service_lifecycle_receipt_archive_with_policy(
+    capsule_root: &Path,
+    latest_receipt: &ServiceLifecycleReceipt,
+    receipt_policy: &ReceiptVerificationPolicy,
+) -> Result<()> {
+    let receipts_root = capsule_root.join("receipts").join("services");
+    let Some(archived) =
+        find_archived_receipt::<ServiceLifecycleReceipt, _>(&receipts_root, |receipt| {
+            receipt.body_hash == latest_receipt.body_hash
+        })?
+    else {
+        return Err(RuntimeError::ReceiptAudit(format!(
+            "latest service lifecycle receipt archive not found: {}",
+            latest_receipt.body_hash
+        )));
+    };
+    verify_service_lifecycle_receipt_with_policy(&archived, receipt_policy)?;
     Ok(())
 }
 

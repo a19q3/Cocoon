@@ -3,6 +3,65 @@
 use std::process::{Command, Stdio};
 
 const REDOX_TARGET: &str = "x86_64-unknown-redox";
+const REDOX_REF_ROOT: &str = "target/ref-repos";
+const REDOX_TRACK_ROOT: &str = "target/redox-track";
+const COCOON_COOKBOOK_RECIPE: &str = "redox/cookbook/cocoon/recipe.toml";
+const REDOX_COOKBOOK_STAGE_ROOT: &str = "target/redox-cookbook";
+const PRODUCTION_AUDIT_ROOT: &str = "target/production-readiness";
+
+struct RedoxReference {
+    name: &'static str,
+    url: &'static str,
+    reason: &'static str,
+}
+
+const REDOX_REFERENCES: &[RedoxReference] = &[
+    RedoxReference {
+        name: "redox",
+        url: "https://github.com/redox-os/redox.git",
+        reason: "Primary OS, build system, recipes, namespaces, and integration signals.",
+    },
+    RedoxReference {
+        name: "relibc",
+        url: "https://github.com/redox-os/relibc.git",
+        reason: "POSIX compatibility, openat/fd semantics, libc startup expectations.",
+    },
+    RedoxReference {
+        name: "pkgutils",
+        url: "https://github.com/redox-os/pkgutils.git",
+        reason: "Native package-management tooling that Cocoon must not replace.",
+    },
+    RedoxReference {
+        name: "cookbook",
+        url: "https://github.com/redox-os/cookbook.git",
+        reason: "Upstream recipe conventions for the Cocoon distribution path.",
+    },
+    RedoxReference {
+        name: "pkgar",
+        url: "https://github.com/redox-os/pkgar.git",
+        reason: "Future Cocoon payload owner and package identity source.",
+    },
+    RedoxReference {
+        name: "redoxer",
+        url: "https://github.com/redox-os/redoxer.git",
+        reason: "Current Redox toolchain and QEMU execution bridge for Cocoon smoke tests.",
+    },
+    RedoxReference {
+        name: "contain",
+        url: "https://github.com/redox-os/contain.git",
+        reason: "Potential upstream sandbox/launcher boundary to compare with Cocoon.",
+    },
+    RedoxReference {
+        name: "kernel",
+        url: "https://github.com/redox-os/kernel.git",
+        reason: "Namespace, scheme, and fd-capability mechanism changes.",
+    },
+    RedoxReference {
+        name: "drivers",
+        url: "https://github.com/redox-os/drivers.git",
+        reason: "Runtime scheme/device behaviour that can affect restricted services.",
+    },
+];
 
 fn main() -> anyhow::Result<()> {
     let task = std::env::args()
@@ -20,27 +79,18 @@ fn main() -> anyhow::Result<()> {
                 "examples/hello-service",
             ],
         ),
-        "test" => {
-            run("cargo", &["fmt", "--all", "--check"])?;
-            run(
-                "cargo",
-                &[
-                    "clippy",
-                    "--all-targets",
-                    "--all-features",
-                    "--",
-                    "-D",
-                    "warnings",
-                ],
-            )?;
-            run("cargo", &["test", "--workspace"])?;
-            Ok(())
-        }
+        "test" => workspace_test(),
+        "prod-gate" => prod_gate(),
+        "prod-audit" => prod_audit(false),
+        "prod-audit-strict" => prod_audit(true),
+        "redox-qemu-gate" => redox_qemu_gate(),
         "redox-smoke" => redox_smoke(),
         "host-smoke" => host_smoke(),
         "redox-target-smoke" => redox_target_smoke(),
         "redoxer-smoke" => redoxer_smoke(),
         "redox-package" => redox_package(),
+        "redox-cookbook-check" => redox_cookbook_check(),
+        "redox-track" => redox_track(),
         "qemu-smoke" => qemu_smoke(),
         "redox-test" => qemu_smoke(),
         _ => {
@@ -48,17 +98,128 @@ fn main() -> anyhow::Result<()> {
             println!("Tasks:");
             println!("  build-examples  Build example capsules");
             println!("  test            Run fmt, clippy, and workspace tests");
+            println!("  prod-gate       Run the consolidated local production-readiness gate");
+            println!("  prod-audit      Write the machine-readable production-readiness verdict");
+            println!("  prod-audit-strict");
+            println!(
+                "                  Write the readiness verdict and fail while blockers remain"
+            );
+            println!("  redox-qemu-gate");
+            println!("                  Run the required Redoxer/QEMU evidence gate");
             println!("  host-smoke      Run host-side P1 smoke checks");
             println!("  redox-target-smoke");
             println!("                  Check Redox target portability and link readiness");
             println!("  redoxer-smoke  Check Redoxer toolchain build readiness");
             println!("  redox-package  Build a Redoxer-backed Cocoon release artifact directory");
+            println!("  redox-cookbook-check");
+            println!("                  Validate and stage the draft Redox Cookbook recipe");
+            println!(
+                "  redox-track    Clone/update Redox reference repos and write a tracking snapshot"
+            );
             println!("  qemu-smoke      Run CLI-only Redox/QEMU verify/plan smoke through Redoxer");
             println!("  redox-smoke     Prepare P1 Redox smoke-test artifacts");
             println!("  redox-test      Run Redox QEMU smoke test (P1)");
             Ok(())
         }
     }
+}
+
+fn workspace_test() -> anyhow::Result<()> {
+    run("cargo", &["fmt", "--all", "--check"])?;
+    run(
+        "cargo",
+        &[
+            "clippy",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
+    run("cargo", &["test", "--workspace"])?;
+    Ok(())
+}
+
+fn prod_gate() -> anyhow::Result<()> {
+    print_section("Production readiness gate");
+    println!(
+        "INFO local gate: SKIP and BLOCKED lines remain non-production evidence, not success claims"
+    );
+
+    workspace_test()?;
+    redox_track()?;
+    redox_cookbook_check()?;
+    redoxer_smoke()?;
+    redox_package()?;
+    redox_smoke()?;
+    let audit = write_production_audit_report()?;
+
+    print_section("Production readiness summary");
+    println!("PASS workspace fmt/clippy/tests");
+    println!("PASS Redox upstream tracking snapshot");
+    println!("PASS Redox Cookbook recipe validation/staging");
+    println!("PASS Redox package staging");
+    println!("PASS Redox smoke scaffold");
+    println!("PASS production readiness audit written");
+    println!("Audit report: {}", audit.report_path.display());
+    println!("Audit verdict: {}", audit.verdict);
+    println!(
+        "Audit checks: {} pass, {} blocked, {} missing",
+        audit.pass_count, audit.blocked_count, audit.missing_count
+    );
+    if program_available("redoxer")? {
+        println!("PASS Redoxer available for native/QEMU smoke");
+    } else {
+        println!("SKIP Redoxer/QEMU execution proof (install with `cargo install redoxer`)");
+    }
+    println!("BLOCKED direct Redox binary link (requires Redox C sysroot/toolchain)");
+    println!("BLOCKED final production label until Redox supervision boundary is reviewed");
+    println!("PASS local production-readiness gate completed with explicit blockers");
+    Ok(())
+}
+
+fn prod_audit(strict: bool) -> anyhow::Result<()> {
+    print_section("Production readiness audit");
+    let audit = write_production_audit_report()?;
+    println!("PASS production readiness audit written");
+    println!("Audit report: {}", audit.report_path.display());
+    println!("Verdict: {}", audit.verdict);
+    println!(
+        "Checks: {} pass, {} blocked, {} missing",
+        audit.pass_count, audit.blocked_count, audit.missing_count
+    );
+
+    if strict && audit.verdict != "production-ready" {
+        anyhow::bail!(
+            "production readiness audit is not clean: {} blocked, {} missing",
+            audit.blocked_count,
+            audit.missing_count
+        );
+    }
+
+    Ok(())
+}
+
+fn redox_qemu_gate() -> anyhow::Result<()> {
+    print_section("Redox/QEMU required gate");
+    println!("INFO required gate: Redoxer, QEMU, and Redox-side execution evidence must pass");
+
+    require_program_available("redoxer", "install with `cargo install redoxer`")?;
+    require_program_available("qemu-system-x86_64", "install QEMU system emulator")?;
+
+    redoxer_smoke()?;
+    redox_package()?;
+    require_redox_package_binary_staged()?;
+    host_smoke()?;
+    redox_target_smoke()?;
+    qemu_smoke_required()?;
+
+    print_section("Redox/QEMU required summary");
+    println!("PASS Redoxer native build/run smoke");
+    println!("PASS Redox package contains a Redoxer-built cocoon binary");
+    println!("PASS Redox/QEMU lifecycle smoke executed");
+    Ok(())
 }
 
 fn redox_smoke() -> anyhow::Result<()> {
@@ -72,6 +233,7 @@ fn host_smoke() -> anyhow::Result<()> {
     let signed_capsule = "target/redox-smoke/hello-service-signed.cocoon";
     let signing_key = "target/redox-smoke/hello-service-signing-key.json";
     let capsule_v2 = "target/redox-smoke/hello-service-v2.cocoon";
+    let long_running_capsule = "target/redox-smoke/long-running-service.cocoon";
     let overlay_dir = std::path::Path::new("target/redox-smoke/overlay/capsules");
     std::fs::create_dir_all(overlay_dir)?;
 
@@ -110,6 +272,21 @@ fn host_smoke() -> anyhow::Result<()> {
         ],
     )?;
     println!("PASS build hello-service v2 capsule");
+
+    run(
+        "cargo",
+        &[
+            "run",
+            "-p",
+            "cocoon-cli",
+            "--",
+            "build",
+            "examples/long-running-service",
+            "--output",
+            long_running_capsule,
+        ],
+    )?;
+    println!("PASS build long-running-service capsule");
 
     run(
         "cargo",
@@ -170,6 +347,10 @@ fn host_smoke() -> anyhow::Result<()> {
 
     std::fs::copy(capsule, overlay_dir.join("hello-service.cocoon"))?;
     std::fs::copy(capsule_v2, overlay_dir.join("hello-service-v2.cocoon"))?;
+    std::fs::copy(
+        long_running_capsule,
+        overlay_dir.join("long-running-service.cocoon"),
+    )?;
     println!("PASS image overlay prepared");
     Ok(())
 }
@@ -564,7 +745,648 @@ fn redox_package() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn redox_track() -> anyhow::Result<()> {
+    print_section("Redox upstream tracking");
+
+    let ref_root = std::path::Path::new(REDOX_REF_ROOT);
+    let track_root = std::path::Path::new(REDOX_TRACK_ROOT);
+    std::fs::create_dir_all(ref_root)?;
+    std::fs::create_dir_all(track_root)?;
+
+    let mut refs = Vec::new();
+    for reference in REDOX_REFERENCES {
+        let repo_dir = ref_root.join(reference.name);
+        sync_redox_reference(reference, &repo_dir)?;
+
+        let head = git_output(&repo_dir, &["rev-parse", "HEAD"])?;
+        let short = git_output(&repo_dir, &["rev-parse", "--short", "HEAD"])?;
+        let date = git_output(&repo_dir, &["log", "-1", "--format=%cI"])?;
+        let subject = git_output(&repo_dir, &["log", "-1", "--format=%s"])?;
+        let branch = git_output(&repo_dir, &["branch", "--show-current"])?;
+        let status = git_output(&repo_dir, &["status", "--short"])?;
+        let dirty = !status.trim().is_empty();
+
+        println!("PASS {} {} {}", reference.name, short, subject);
+        refs.push(serde_json::json!({
+            "name": reference.name,
+            "url": reference.url,
+            "local_path": repo_dir.to_string_lossy().replace('\\', "/"),
+            "branch": branch,
+            "head": head,
+            "head_short": short,
+            "head_date": date,
+            "head_subject": subject,
+            "dirty": dirty,
+            "reason": reference.reason,
+        }));
+    }
+
+    refs.sort_by(|left, right| {
+        left["name"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["name"].as_str().unwrap_or_default())
+    });
+
+    let snapshot = serde_json::json!({
+        "format_version": 1,
+        "generated_at": format!("unix:{}", unix_seconds()?),
+        "clone_root": REDOX_REF_ROOT,
+        "tracking_scope": "Cocoon production-readiness Redox references",
+        "refs": refs,
+    });
+    let snapshot_path = track_root.join("upstream-refs.json");
+    std::fs::write(&snapshot_path, serde_json::to_vec_pretty(&snapshot)?)?;
+    println!("PASS Redox upstream snapshot written");
+    println!("Snapshot: {}", snapshot_path.display());
+    Ok(())
+}
+
+fn redox_cookbook_check() -> anyhow::Result<()> {
+    print_section("Redox Cookbook recipe");
+
+    let recipe_path = std::path::Path::new(COCOON_COOKBOOK_RECIPE);
+    let recipe = parse_toml_file(recipe_path)?;
+
+    let source_git = required_toml_str(&recipe, "source", "git")?;
+    if source_git != "https://github.com/a19q3/Cocoon.git" {
+        anyhow::bail!(
+            "unexpected Cocoon Cookbook source git in {}: {source_git}",
+            recipe_path.display()
+        );
+    }
+    let source_branch = required_toml_str(&recipe, "source", "branch")?;
+    if source_branch != "main" {
+        anyhow::bail!(
+            "unexpected Cocoon Cookbook source branch in {}: {source_branch}",
+            recipe_path.display()
+        );
+    }
+    let build_template = required_toml_str(&recipe, "build", "template")?;
+    if build_template != "cargo" {
+        anyhow::bail!(
+            "unexpected Cocoon Cookbook build template in {}: {build_template}",
+            recipe_path.display()
+        );
+    }
+    let package_path = required_toml_str(&recipe, "build", "package_path")?;
+    if package_path != "crates/cocoon-cli" {
+        anyhow::bail!(
+            "unexpected Cocoon Cookbook package_path in {}: {package_path}",
+            recipe_path.display()
+        );
+    }
+    if !std::path::Path::new(package_path)
+        .join("Cargo.toml")
+        .is_file()
+    {
+        anyhow::bail!("Cocoon Cookbook package_path does not point at a crate: {package_path}");
+    }
+    println!("PASS Cocoon Cookbook recipe parsed");
+    println!("PASS Cocoon Cookbook cargo package path exists");
+
+    let cookbook_root = std::path::Path::new(REDOX_REF_ROOT).join("cookbook");
+    if !cookbook_root.join("recipes").is_dir() {
+        anyhow::bail!(
+            "Redox Cookbook reference is missing at {}; run `cargo xtask redox-track` first",
+            cookbook_root.display()
+        );
+    }
+
+    let cargo_template_recipe = cookbook_root.join("recipes/tools/ripgrep/recipe.toml");
+    let cargo_template = parse_toml_file(&cargo_template_recipe)?;
+    if required_toml_str(&cargo_template, "build", "template")? != "cargo" {
+        anyhow::bail!(
+            "upstream cargo template reference is no longer a cargo recipe: {}",
+            cargo_template_recipe.display()
+        );
+    }
+    println!(
+        "PASS upstream Cookbook cargo template observed: {}",
+        cargo_template_recipe.display()
+    );
+
+    let package_path_recipe = cookbook_root.join("recipes/core/pkgar/recipe.toml");
+    let package_path_reference = parse_toml_file(&package_path_recipe)?;
+    if required_toml_str(&package_path_reference, "build", "package_path")?.is_empty() {
+        anyhow::bail!(
+            "upstream package_path reference is missing package_path: {}",
+            package_path_recipe.display()
+        );
+    }
+    println!(
+        "PASS upstream Cookbook package_path convention observed: {}",
+        package_path_recipe.display()
+    );
+
+    let stage_root = std::path::Path::new(REDOX_COOKBOOK_STAGE_ROOT);
+    remove_dir_if_exists(stage_root)?;
+    let stage_recipe_dir = stage_root.join("cookbook/recipes/tools/cocoon");
+    std::fs::create_dir_all(&stage_recipe_dir)?;
+    let staged_recipe = stage_recipe_dir.join("recipe.toml");
+    std::fs::copy(recipe_path, &staged_recipe)?;
+
+    let source_readme = std::path::Path::new("redox/cookbook/cocoon/README.md");
+    if source_readme.is_file() {
+        std::fs::copy(source_readme, stage_recipe_dir.join("README.md"))?;
+    }
+
+    let recipe_text = std::fs::read(recipe_path)?;
+    let check = serde_json::json!({
+        "format_version": 1,
+        "recipe": COCOON_COOKBOOK_RECIPE,
+        "staged_recipe": staged_recipe.to_string_lossy().replace('\\', "/"),
+        "provisional_category": "tools",
+        "source_git": source_git,
+        "source_branch": source_branch,
+        "build_template": build_template,
+        "package_path": package_path,
+        "recipe_blake3": format!("blake3:{}", blake3::hash(&recipe_text).to_hex()),
+        "upstream_observations": [
+            {
+                "path": cargo_template_recipe.to_string_lossy().replace('\\', "/"),
+                "evidence": "build.template = cargo"
+            },
+            {
+                "path": package_path_recipe.to_string_lossy().replace('\\', "/"),
+                "evidence": "build.package_path is accepted by upstream Cookbook recipes"
+            }
+        ],
+        "blocked": [
+            "Full Redox Cookbook build execution still requires a Redox build checkout and toolchain."
+        ]
+    });
+    let check_path = stage_root.join("recipe-check.json");
+    std::fs::write(&check_path, serde_json::to_vec_pretty(&check)?)?;
+    println!("PASS Cocoon Cookbook recipe staged");
+    println!("PASS Cocoon Cookbook recipe check written");
+    println!("Stage root: {}", stage_root.display());
+    println!("BLOCKED Redox Cookbook build execution (requires full Redox build checkout)");
+    Ok(())
+}
+
+struct ProductionAuditSummary {
+    report_path: std::path::PathBuf,
+    verdict: String,
+    pass_count: usize,
+    blocked_count: usize,
+    missing_count: usize,
+}
+
+fn write_production_audit_report() -> anyhow::Result<ProductionAuditSummary> {
+    let audit_root = std::path::Path::new(PRODUCTION_AUDIT_ROOT);
+    std::fs::create_dir_all(audit_root)?;
+
+    let mut checks = Vec::new();
+
+    checks.push(redox_tracking_audit_check());
+    checks.push(cookbook_recipe_audit_check());
+    checks.push(cookbook_full_build_audit_check());
+
+    let package_manifest =
+        std::path::Path::new("target/redox-package/cocoon-redox/release-manifest.json");
+    let package_json = read_json_file(package_manifest).ok();
+    checks.push(redox_package_staging_audit_check(
+        package_manifest,
+        package_json.as_ref(),
+    ));
+    checks.push(redoxer_package_binary_audit_check(
+        package_manifest,
+        package_json.as_ref(),
+    ));
+
+    checks.push(tool_available_audit_check(
+        "redoxer_available",
+        "Redoxer is available for native Redox build and QEMU execution evidence.",
+        "redoxer",
+        "install with `cargo install redoxer`",
+    ));
+    checks.push(tool_available_audit_check(
+        "qemu_available",
+        "QEMU system emulator is available for required Redox execution evidence.",
+        "qemu-system-x86_64",
+        "install QEMU system emulator",
+    ));
+    checks.push(audit_check(
+        "redox_qemu_required_gate",
+        "blocked",
+        "The strict Redoxer/QEMU gate must pass on a Redox-capable runner.",
+        "Run `cargo xtask redox-qemu-gate` on the required Linux runner and preserve the CI result.",
+        true,
+    ));
+    checks.push(audit_check(
+        "direct_redox_binary_link",
+        "blocked",
+        "Direct x86_64-unknown-redox binary linking still depends on the Redox C sysroot/toolchain.",
+        "Close the Redox C sysroot/toolchain path or keep Redoxer as the documented native artifact bridge.",
+        true,
+    ));
+    checks.push(audit_check(
+        "redox_authority_default",
+        "blocked",
+        "`cocoon run` does not yet default to the final `redox-enforced` production authority label.",
+        "Review the FD launcher boundary upstream before promoting default Redox enforcement.",
+        true,
+    ));
+    checks.push(audit_check(
+        "redox_service_supervision",
+        "blocked",
+        "Service lifecycle commands still use the host process supervisor boundary for local evidence.",
+        "Review and execute the Redox service-manager or FD-backed supervisor boundary on Redoxer/QEMU.",
+        true,
+    ));
+    checks.push(audit_check(
+        "github_actions_redox_lane",
+        "blocked",
+        "The required Redoxer/QEMU GitHub Actions lane is configured, but its first successful run is not observed locally.",
+        "Observe the first CI run and protect the branch with the host and Redox-capable gates.",
+        true,
+    ));
+    checks.push(audit_check(
+        "payload_identity",
+        "pass",
+        "Install receipts include forward-compatible payload identity for current Cocoon bundle payloads.",
+        "Runtime and CLI evidence cover the current `cocoon-bundle` payload identity slot; future pkgar payloads should fill the same receipt field.",
+        true,
+    ));
+
+    let pass_count = count_checks(&checks, "pass");
+    let blocked_count = count_checks(&checks, "blocked");
+    let missing_count = count_checks(&checks, "missing");
+    let verdict = if blocked_count == 0 && missing_count == 0 {
+        "production-ready"
+    } else {
+        "not-production-ready"
+    };
+
+    let report = serde_json::json!({
+        "format_version": 1,
+        "generated_at": format!("unix:{}", unix_seconds()?),
+        "verdict": verdict,
+        "summary": {
+            "pass": pass_count,
+            "blocked": blocked_count,
+            "missing": missing_count,
+        },
+        "checks": checks,
+        "notes": [
+            "`prod-gate` may pass locally with explicit blockers; this report is the canonical readiness verdict.",
+            "`prod-audit-strict` is expected to fail until all required production blockers are closed.",
+            "Redox upstream tracking is relevance and freshness evidence, not a production-ready claim by itself."
+        ],
+    });
+
+    let report_path = audit_root.join("report.json");
+    std::fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
+
+    Ok(ProductionAuditSummary {
+        report_path,
+        verdict: verdict.to_string(),
+        pass_count,
+        blocked_count,
+        missing_count,
+    })
+}
+
+fn redox_tracking_audit_check() -> serde_json::Value {
+    let path = std::path::Path::new(REDOX_TRACK_ROOT).join("upstream-refs.json");
+    match read_json_file(&path) {
+        Ok(snapshot) => {
+            let observed = snapshot
+                .get("refs")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len);
+            if observed == REDOX_REFERENCES.len() {
+                audit_check(
+                    "redox_upstream_tracking",
+                    "pass",
+                    "Redox reference snapshot exists for the full tracked repository set.",
+                    format!(
+                        "{} records {observed} tracked Redox references.",
+                        path.display()
+                    ),
+                    true,
+                )
+            } else {
+                audit_check(
+                    "redox_upstream_tracking",
+                    "missing",
+                    "Redox reference snapshot does not cover the full tracked repository set.",
+                    format!(
+                        "{} records {observed} references; expected {}. Run `cargo xtask redox-track`.",
+                        path.display(),
+                        REDOX_REFERENCES.len()
+                    ),
+                    true,
+                )
+            }
+        }
+        Err(error) => audit_check(
+            "redox_upstream_tracking",
+            "missing",
+            "Redox reference snapshot is not available.",
+            format!("{} could not be read: {error}", path.display()),
+            true,
+        ),
+    }
+}
+
+fn cookbook_recipe_audit_check() -> serde_json::Value {
+    let path = std::path::Path::new(REDOX_COOKBOOK_STAGE_ROOT).join("recipe-check.json");
+    match read_json_file(&path) {
+        Ok(check)
+            if check
+                .get("recipe")
+                .and_then(serde_json::Value::as_str)
+                .is_some() =>
+        {
+            audit_check(
+                "redox_cookbook_recipe",
+                "pass",
+                "Draft Redox Cookbook recipe has been validated and staged locally.",
+                format!(
+                    "{} exists and records the staged Cocoon recipe.",
+                    path.display()
+                ),
+                true,
+            )
+        }
+        Ok(_) => audit_check(
+            "redox_cookbook_recipe",
+            "missing",
+            "Draft Redox Cookbook recipe check is malformed.",
+            format!(
+                "{} does not contain the expected recipe metadata.",
+                path.display()
+            ),
+            true,
+        ),
+        Err(error) => audit_check(
+            "redox_cookbook_recipe",
+            "missing",
+            "Draft Redox Cookbook recipe has not been validated in this workspace.",
+            format!(
+                "{} could not be read: {error}. Run `cargo xtask redox-cookbook-check`.",
+                path.display()
+            ),
+            true,
+        ),
+    }
+}
+
+fn cookbook_full_build_audit_check() -> serde_json::Value {
+    audit_check(
+        "redox_cookbook_full_build",
+        "blocked",
+        "Full Redox Cookbook build execution has not been run from a full Redox build checkout.",
+        "Run the staged recipe in the upstream Redox build environment before treating the package path as production evidence.",
+        true,
+    )
+}
+
+fn redox_package_staging_audit_check(
+    path: &std::path::Path,
+    package_json: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    match package_json {
+        Some(manifest)
+            if manifest
+                .get("package_name")
+                .and_then(serde_json::Value::as_str)
+                == Some("cocoon-redox") =>
+        {
+            audit_check(
+                "redox_package_staging",
+                "pass",
+                "Redox package staging manifest exists.",
+                format!(
+                    "{} records the cocoon-redox release artifact set.",
+                    path.display()
+                ),
+                true,
+            )
+        }
+        Some(_) => audit_check(
+            "redox_package_staging",
+            "missing",
+            "Redox package staging manifest is malformed.",
+            format!(
+                "{} does not identify the cocoon-redox package.",
+                path.display()
+            ),
+            true,
+        ),
+        None => audit_check(
+            "redox_package_staging",
+            "missing",
+            "Redox package staging manifest is not available.",
+            format!(
+                "{} has not been written. Run `cargo xtask redox-package`.",
+                path.display()
+            ),
+            true,
+        ),
+    }
+}
+
+fn redoxer_package_binary_audit_check(
+    path: &std::path::Path,
+    package_json: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    match package_json
+        .and_then(|manifest| manifest.get("redox_binary_staged"))
+        .and_then(serde_json::Value::as_bool)
+    {
+        Some(true) => audit_check(
+            "redoxer_package_binary",
+            "pass",
+            "A Redoxer-built Cocoon binary is staged in the release artifact.",
+            format!("{} has redox_binary_staged = true.", path.display()),
+            true,
+        ),
+        Some(false) => audit_check(
+            "redoxer_package_binary",
+            "blocked",
+            "The release artifact does not yet contain a Redoxer-built Cocoon binary.",
+            format!(
+                "{} has redox_binary_staged = false; run on a Redoxer-capable runner.",
+                path.display()
+            ),
+            true,
+        ),
+        None => audit_check(
+            "redoxer_package_binary",
+            "missing",
+            "Redoxer-built binary staging evidence is not available.",
+            format!(
+                "{} is missing or does not expose redox_binary_staged.",
+                path.display()
+            ),
+            true,
+        ),
+    }
+}
+
+fn tool_available_audit_check(
+    id: &str,
+    pass_summary: &str,
+    program: &str,
+    hint: &str,
+) -> serde_json::Value {
+    match program_available(program) {
+        Ok(true) => audit_check(
+            id,
+            "pass",
+            pass_summary,
+            format!("`{program} --help` is executable in this environment."),
+            true,
+        ),
+        Ok(false) => audit_check(
+            id,
+            "blocked",
+            format!("{program} is not available in this environment."),
+            hint,
+            true,
+        ),
+        Err(error) => audit_check(
+            id,
+            "blocked",
+            format!("{program} availability check failed."),
+            error.to_string(),
+            true,
+        ),
+    }
+}
+
+fn audit_check(
+    id: &str,
+    status: &str,
+    summary: impl Into<String>,
+    evidence: impl Into<String>,
+    required_for_production: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "status": status,
+        "summary": summary.into(),
+        "evidence": evidence.into(),
+        "required_for_production": required_for_production,
+    })
+}
+
+fn count_checks(checks: &[serde_json::Value], status: &str) -> usize {
+    checks
+        .iter()
+        .filter(|check| check.get("status").and_then(serde_json::Value::as_str) == Some(status))
+        .count()
+}
+
+fn read_json_file(path: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+    Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+}
+
+fn sync_redox_reference(
+    reference: &RedoxReference,
+    repo_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let repo_dir_arg = repo_dir.to_string_lossy().into_owned();
+    if repo_dir.join(".git").is_dir() {
+        println!("UPDATE {} from {}", reference.name, reference.url);
+        run(
+            "git",
+            &["-C", &repo_dir_arg, "fetch", "--depth", "1", "origin"],
+        )?;
+    } else {
+        println!("CLONE {} from {}", reference.name, reference.url);
+        let parent = repo_dir.parent().ok_or_else(|| {
+            anyhow::anyhow!("reference path has no parent: {}", repo_dir.display())
+        })?;
+        std::fs::create_dir_all(parent)?;
+        run(
+            "git",
+            &[
+                "clone",
+                "--depth",
+                "1",
+                reference.url,
+                repo_dir_arg.as_str(),
+            ],
+        )?;
+    }
+
+    let branch = default_remote_branch(repo_dir)?;
+    run("git", &["-C", &repo_dir_arg, "checkout", "-q", &branch])?;
+    let remote_ref = format!("origin/{branch}");
+    run(
+        "git",
+        &["-C", &repo_dir_arg, "reset", "--hard", "-q", &remote_ref],
+    )?;
+    Ok(())
+}
+
+fn default_remote_branch(repo_dir: &std::path::Path) -> anyhow::Result<String> {
+    let output = git_output(
+        repo_dir,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )?;
+    if let Some(branch) = output.strip_prefix("origin/") {
+        return Ok(branch.to_string());
+    }
+    if !output.is_empty() {
+        return Ok(output);
+    }
+
+    let branches = git_output(repo_dir, &["branch", "-r"])?;
+    branches
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.ends_with("/HEAD"))
+        .find_map(|line| line.strip_prefix("origin/").map(ToString::to_string))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unable to determine default branch for {}",
+                repo_dir.display()
+            )
+        })
+}
+
+fn git_output(repo_dir: &std::path::Path, args: &[&str]) -> anyhow::Result<String> {
+    let repo_dir_arg = repo_dir.to_string_lossy().into_owned();
+    let mut full_args = vec!["-C", repo_dir_arg.as_str()];
+    full_args.extend_from_slice(args);
+    let output = Command::new("git").args(&full_args).output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git command failed in {}: git {}\n{}",
+            repo_dir.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[derive(Clone, Copy)]
+enum QemuSmokeMode {
+    AllowSkip,
+    RequireExecution,
+}
+
+impl QemuSmokeMode {
+    const fn requires_execution(self) -> bool {
+        matches!(self, Self::RequireExecution)
+    }
+}
+
 fn qemu_smoke() -> anyhow::Result<()> {
+    qemu_smoke_with_mode(QemuSmokeMode::AllowSkip)
+}
+
+fn qemu_smoke_required() -> anyhow::Result<()> {
+    qemu_smoke_with_mode(QemuSmokeMode::RequireExecution)
+}
+
+fn qemu_smoke_with_mode(mode: QemuSmokeMode) -> anyhow::Result<()> {
     print_section("QEMU smoke");
 
     let capsule = "target/redox-smoke/hello-service.cocoon";
@@ -572,6 +1394,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     let capsule_log = "target/redox-smoke/log-service.cocoon";
     let capsule_network_denied = "target/redox-smoke/network-denied-service.cocoon";
     let capsule_v2 = "target/redox-smoke/hello-service-v2.cocoon";
+    let capsule_long_running = "target/redox-smoke/long-running-service.cocoon";
     let install_root = "target/redox-smoke/qemu-install";
 
     if !program_available("redoxer")? {
@@ -584,6 +1407,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP reject locked capsule operations inside redox");
         println!("SKIP install capsule inside redox");
         println!("SKIP report installed service status inside redox");
+        println!("SKIP supervised service lifecycle inside redox");
+        println!("SKIP long-running service crash recovery lifecycle inside redox");
+        println!("SKIP recover stale service state inside redox");
         println!("SKIP probe Redox authority inside redox");
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
@@ -606,6 +1432,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP reject missing rollback version inside redox");
         println!("SKIP reject tampered install inside redox");
         println!("SKIP collect receipts/logs");
+        if mode.requires_execution() {
+            anyhow::bail!("Redox/QEMU execution required but redoxer is not available");
+        }
         return Ok(());
     }
 
@@ -619,6 +1448,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP reject locked capsule operations inside redox");
         println!("SKIP install capsule inside redox");
         println!("SKIP report installed service status inside redox");
+        println!("SKIP supervised service lifecycle inside redox");
+        println!("SKIP long-running service crash recovery lifecycle inside redox");
+        println!("SKIP recover stale service state inside redox");
         println!("SKIP probe Redox authority inside redox");
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
@@ -641,6 +1473,11 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP reject missing rollback version inside redox");
         println!("SKIP reject tampered install inside redox");
         println!("SKIP collect receipts/logs");
+        if mode.requires_execution() {
+            anyhow::bail!(
+                "Redox/QEMU execution required but host smoke artifacts are missing; run `cargo xtask host-smoke` first"
+            );
+        }
         return Ok(());
     }
 
@@ -656,6 +1493,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP reject locked capsule operations inside redox");
         println!("SKIP install capsule inside redox");
         println!("SKIP report installed service status inside redox");
+        println!("SKIP supervised service lifecycle inside redox");
+        println!("SKIP long-running service crash recovery lifecycle inside redox");
+        println!("SKIP recover stale service state inside redox");
         println!("SKIP probe Redox authority inside redox");
         println!("SKIP classify Redox FD-only service launch gap inside redox");
         println!("SKIP probe Redox FD-only controlled service launch inside redox");
@@ -678,6 +1518,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("SKIP reject missing rollback version inside redox");
         println!("SKIP reject tampered install inside redox");
         println!("SKIP collect receipts/logs");
+        if mode.requires_execution() {
+            anyhow::bail!("Redox/QEMU execution required but `redoxer build -p cocoon-cli` failed");
+        }
         return Ok(());
     }
 
@@ -724,6 +1567,19 @@ fn qemu_smoke() -> anyhow::Result<()> {
             capsule_network_denied,
         ],
     )?;
+    run(
+        "cargo",
+        &[
+            "run",
+            "-p",
+            "cocoon-cli",
+            "--",
+            "build",
+            "examples/long-running-service",
+            "--output",
+            capsule_long_running,
+        ],
+    )?;
 
     let cocoon_binary = "target/x86_64-unknown-redox/debug/cocoon";
     let qemu_root = "target/redox-smoke/redoxer-root";
@@ -736,6 +1592,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
             (capsule_log, "log-service.cocoon"),
             (capsule_network_denied, "network-denied-service.cocoon"),
             (capsule_v2, "hello-service-v2.cocoon"),
+            (capsule_long_running, "long-running-service.cocoon"),
         ],
     )?;
 
@@ -746,6 +1603,7 @@ fn qemu_smoke() -> anyhow::Result<()> {
     let capsule_log = "/root/redoxer-root/capsules/log-service.cocoon";
     let capsule_network_denied = "/root/redoxer-root/capsules/network-denied-service.cocoon";
     let capsule_v2 = "/root/redoxer-root/capsules/hello-service-v2.cocoon";
+    let capsule_long_running = "/root/redoxer-root/capsules/long-running-service.cocoon";
     let install_root = "/root/redoxer-root/install";
 
     let verify = run_required_capture(
@@ -794,6 +1652,37 @@ fn qemu_smoke() -> anyhow::Result<()> {
          rmdir {install_root}/.locks/hello-service.lock && \
          {cocoon_binary} install {capsule} --install-root {install_root} && \
          {cocoon_binary} status hello-service --install-root {install_root} && \
+         if {cocoon_binary} start hello-service --install-root {install_root}; then \
+             echo SERVICE_START_WITHOUT_AUTH_UNEXPECTED_PASS; \
+             exit 60; \
+         else \
+             echo PASS service start before authority acknowledgement rejected; \
+         fi && \
+         {cocoon_binary} start hello-service --allow-unenforced-authority --install-root {install_root} && \
+         {cocoon_binary} health hello-service --install-root {install_root} && \
+         {cocoon_binary} status hello-service --install-root {install_root} && \
+         {cocoon_binary} stop hello-service --install-root {install_root} && \
+         {cocoon_binary} audit hello-service --install-root {install_root} && \
+         {cocoon_binary} install {capsule_long_running} --install-root {install_root} && \
+         if {cocoon_binary} start long-running-service --install-root {install_root}; then \
+             echo LONG_SERVICE_START_WITHOUT_AUTH_UNEXPECTED_PASS; \
+             exit 61; \
+         else \
+             echo PASS long-running service start before authority acknowledgement rejected; \
+         fi && \
+         {cocoon_binary} start long-running-service --allow-unenforced-authority --install-root {install_root} && \
+         {cocoon_binary} health long-running-service --install-root {install_root} && \
+         {cocoon_binary} status long-running-service --install-root {install_root} && \
+         {cocoon_binary} restart long-running-service --allow-unenforced-authority --install-root {install_root} && \
+         {cocoon_binary} health long-running-service --install-root {install_root} && \
+         long_service_pid=$(cat {install_root}/capsules/long-running-service/service/pid) && \
+         kill -KILL $long_service_pid && \
+         {cocoon_binary} health long-running-service --install-root {install_root} && \
+         {cocoon_binary} recover-all --install-root {install_root} && \
+         {cocoon_binary} restart long-running-service --allow-unenforced-authority --install-root {install_root} && \
+         {cocoon_binary} health long-running-service --install-root {install_root} && \
+         {cocoon_binary} stop long-running-service --install-root {install_root} && \
+         {cocoon_binary} audit long-running-service --install-root {install_root} && \
          {cocoon_binary} probe-authority hello-service --install-root {install_root} && \
          {cocoon_binary} probe-fd-exec hello-service --install-root {install_root} && \
          {cocoon_binary} probe-fd-launch hello-service --install-root {install_root} && \
@@ -861,6 +1750,9 @@ fn qemu_smoke() -> anyhow::Result<()> {
              echo PASS locked audit rejected; \
          fi && \
          {cocoon_binary} recover hello-service --break-lock --install-root {install_root} && \
+         mkdir -p {install_root}/capsules/hello-service/service && \
+         printf '{{\"capsule_name\":\"hello-service\",\"capsule_version\":\"0.1.0\",\"pid\":4294967295,\"command\":\"/app/bin/hello-service\",\"args\":[],\"actual_args\":[],\"authority_enforced\":false,\"authority_mode\":\"smoke-unenforced\",\"stdout_log\":\"{install_root}/capsules/hello-service/logs/stale.stdout.log\",\"stderr_log\":\"{install_root}/capsules/hello-service/logs/stale.stderr.log\",\"started_at\":\"unix:1\",\"runtime_version\":\"0.1.0\"}}' > {install_root}/capsules/hello-service/service/state.json && \
+         {cocoon_binary} recover hello-service --install-root {install_root} && \
          if {cocoon_binary} install {capsule} --install-root {install_root}; then \
              echo DUPLICATE_INSTALL_UNEXPECTED_PASS; \
              exit 45; \
@@ -1038,6 +1930,44 @@ fn qemu_smoke() -> anyhow::Result<()> {
         println!("TODO report installed service status inside redox");
     }
 
+    if install_run.contains("PASS service start before authority acknowledgement rejected")
+        && install_run.contains("failed to start service 'hello-service'")
+        && install_run.contains("service start currently lacks Redox namespace")
+        && install_run.contains("Service start hello-service")
+        && install_run.contains("Health for hello-service")
+        && install_run.contains("Service stop hello-service")
+        && install_run.contains("latest service lifecycle receipt body hash")
+        && install_run.contains("latest service lifecycle receipt archive link")
+        && install_run.contains("latest service lifecycle action: stop")
+    {
+        println!("PASS supervised service lifecycle inside redox");
+    } else {
+        qemu_failed = true;
+        println!("TODO supervised service lifecycle inside redox");
+    }
+
+    if install_run.contains("Installed long-running-service@0.1.0")
+        && install_run
+            .contains("PASS long-running service start before authority acknowledgement rejected")
+        && install_run.contains("failed to start service 'long-running-service'")
+        && install_run.contains("Service start long-running-service")
+        && install_run.contains("Health for long-running-service")
+        && install_run.contains("Running: true")
+        && install_run.contains("Service supervisor running: true")
+        && install_run.contains("Restarted long-running-service")
+        && install_run.contains("Health detail: service state exists but process is not running")
+        && install_run.contains("Recovered all capsules")
+        && install_run.contains("Recovered long-running-service")
+        && install_run.contains("capsules/long-running-service/service/state.json")
+        && install_run.contains("Service stop long-running-service")
+        && install_run.contains("Audit passed for long-running-service")
+    {
+        println!("PASS long-running service crash recovery lifecycle inside redox");
+    } else {
+        qemu_failed = true;
+        println!("TODO long-running service crash recovery lifecycle inside redox");
+    }
+
     if install_run.contains("PASS redox authority child entered restricted namespace")
         && install_run.contains("PASS redox authority child returned structured result")
         && install_run.contains("PASS redox authority child read allowed preopen")
@@ -1208,6 +2138,13 @@ fn qemu_smoke() -> anyhow::Result<()> {
     } else {
         qemu_failed = true;
         println!("TODO recover temporary install state inside redox");
+    }
+
+    if install_run.contains("capsules/hello-service/service/state.json") {
+        println!("PASS recover stale service state inside redox");
+    } else {
+        qemu_failed = true;
+        println!("TODO recover stale service state inside redox");
     }
 
     if install_run.contains("PASS duplicate install rejected")
@@ -1504,6 +2441,34 @@ fn remove_dir_if_exists(path: impl AsRef<std::path::Path>) -> anyhow::Result<()>
     Ok(())
 }
 
+fn parse_toml_file(path: &std::path::Path) -> anyhow::Result<toml::Table> {
+    let contents = std::fs::read_to_string(path)?;
+    contents.parse::<toml::Table>().map_err(|error| {
+        anyhow::anyhow!(
+            "failed to parse TOML file {}: {error}",
+            path.to_string_lossy()
+        )
+    })
+}
+
+fn required_toml_str<'a>(
+    document: &'a toml::Table,
+    table: &str,
+    key: &str,
+) -> anyhow::Result<&'a str> {
+    document
+        .get(table)
+        .and_then(|value| value.get(key))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing TOML string: {table}.{key}"))
+}
+
+fn unix_seconds() -> anyhow::Result<u64> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs())
+}
+
 fn copy_dir_recursive(
     source: impl AsRef<std::path::Path>,
     target: impl AsRef<std::path::Path>,
@@ -1572,6 +2537,34 @@ fn artifact_manifest_entry(
         "bytes": bytes.len(),
         "blake3": format!("blake3:{}", blake3::hash(&bytes).to_hex()),
     }))
+}
+
+fn require_redox_package_binary_staged() -> anyhow::Result<()> {
+    let manifest_path =
+        std::path::Path::new("target/redox-package/cocoon-redox/release-manifest.json");
+    let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(manifest_path)?)?;
+    if manifest
+        .get("redox_binary_staged")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        println!("PASS required Redoxer-built package binary staged");
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "required Redoxer-built package binary was not staged; see {}",
+        manifest_path.display()
+    );
+}
+
+fn require_program_available(program: &str, hint: &str) -> anyhow::Result<()> {
+    if program_available(program)? {
+        println!("PASS required program available: {program}");
+        Ok(())
+    } else {
+        anyhow::bail!("required program is not available: {program} ({hint})")
+    }
 }
 
 fn program_available(program: &str) -> anyhow::Result<bool> {

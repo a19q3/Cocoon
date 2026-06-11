@@ -26,8 +26,43 @@ Use a Linux laptop or Linux VM with:
 From the Cocoon repository:
 
 ```bash
+cargo xtask prod-gate
+```
+
+This consolidated local gate runs workspace checks, refreshes Redox reference
+tracking, validates/stages the draft Cookbook recipe, builds the Redox package
+staging root, and runs the Redox smoke scaffold. `SKIP` and `BLOCKED` lines
+remain non-production evidence; they must be resolved or covered by a documented
+Redoxer/QEMU runner before claiming production readiness. It also writes the
+machine-readable readiness report at
+`target/production-readiness/report.json`.
+
+To refresh only that verdict without rerunning the whole gate:
+
+```bash
+cargo xtask prod-audit
+```
+
+`cargo xtask prod-audit-strict` is expected to fail while required production
+blockers remain.
+
+For the lower-level Redox scaffold only:
+
+```bash
 cargo xtask redox-smoke
 ```
+
+On a Linux runner with Redoxer and QEMU installed, run the required Redox
+execution gate:
+
+```bash
+cargo xtask redox-qemu-gate
+```
+
+Unlike `prod-gate`, this command is intentionally not permissive: it requires
+`redoxer`, `qemu-system-x86_64`, a Redoxer-built `bin/cocoon` in the release
+artifact, and a completed Redox/QEMU lifecycle smoke. It is the command used by
+the required Redoxer/QEMU CI job.
 
 Expected early output:
 
@@ -36,6 +71,7 @@ Expected early output:
 PASS host build cocoon
 PASS build hello-service.cocoon
 PASS build hello-service v2 capsule
+PASS build long-running-service capsule
 PASS verify capsule
 PASS generate bundle signing key
 PASS build signed capsule
@@ -59,6 +95,9 @@ SKIP reject run before install inside redox
 SKIP reject locked capsule operations inside redox
 SKIP install capsule inside redox
 SKIP report installed service status inside redox
+SKIP supervised service lifecycle inside redox
+SKIP long-running service crash recovery lifecycle inside redox
+SKIP recover stale service state inside redox
 SKIP probe Redox authority inside redox
 SKIP classify Redox FD-only service launch gap inside redox
 SKIP probe Redox FD-only controlled service launch inside redox
@@ -132,9 +171,12 @@ The scaffold writes:
 ```text
 target/redox-smoke/
   ├── hello-service.cocoon
+  ├── long-running-service.cocoon
   └── overlay/
       └── capsules/
           └── hello-service.cocoon
+          └── hello-service-v2.cocoon
+          └── long-running-service.cocoon
 ```
 
 Optional Redox target checks are quiet by default so the scaffold output stays
@@ -149,12 +191,29 @@ COCOON_SMOKE_VERBOSE=1 cargo xtask redox-smoke
 P1.1a/P1.1b are about making the toolchain path reproducible before claiming a QEMU
 execution smoke. Do not hand-roll linker flags as the default path.
 
+Refresh the local upstream reference set before changing the Redox integration
+boundary:
+
+```bash
+cargo xtask redox-track
+```
+
+This writes `target/redox-track/upstream-refs.json` and shallow-clones the
+tracked Redox references under `target/ref-repos`. See
+[REDOX_UPSTREAM_TRACKING.md](REDOX_UPSTREAM_TRACKING.md) for the tracked
+repositories and review rule.
+
 There are two upstream-aligned routes to verify:
 
 - Redox Cookbook recipe: the Redox build system uses Cookbook recipes to compile
   programs into Redox-specific binaries, stage files, and produce `pkgar` or
   legacy tar packages. This is the likely long-term image integration path for
-  Cocoon.
+  Cocoon. The current Cocoon draft recipe lives at
+  `redox/cookbook/cocoon/recipe.toml`. Validate and stage the draft recipe with
+  `cargo xtask redox-cookbook-check`; this writes a Cookbook-shaped staging tree
+  under `target/redox-cookbook/cookbook/recipes/tools/cocoon` and a
+  `target/redox-cookbook/recipe-check.json` evidence file. The `tools/cocoon`
+  category is provisional until upstream review.
 - Redoxer: `redoxer` installs/manages a Redox toolchain, exposes a sysroot via
   `REDOXER_SYSROOT`, runs Cargo with the Redox environment, and can run commands
   inside a Redox QEMU image. This is the smallest path for a linking and
@@ -204,6 +263,33 @@ The Redoxer README describes `redoxer build` as a Cargo build run with the Redox
 environment, `redoxer run` as running a Cargo target inside Redox, and
 `REDOXER_SYSROOT` as the sysroot override when needed.
 
+## Cookbook Recipe Check
+
+Validate the draft Cookbook recipe against the tracked upstream Cookbook
+reference:
+
+```bash
+cargo xtask redox-track
+cargo xtask redox-cookbook-check
+```
+
+Expected output includes:
+
+```text
+== Redox Cookbook recipe ==
+PASS Cocoon Cookbook recipe parsed
+PASS Cocoon Cookbook cargo package path exists
+PASS upstream Cookbook cargo template observed: target/ref-repos/cookbook/recipes/tools/ripgrep/recipe.toml
+PASS upstream Cookbook package_path convention observed: target/ref-repos/cookbook/recipes/core/pkgar/recipe.toml
+PASS Cocoon Cookbook recipe staged
+PASS Cocoon Cookbook recipe check written
+Stage root: target/redox-cookbook
+BLOCKED Redox Cookbook build execution (requires full Redox build checkout)
+```
+
+This check proves recipe shape and local staging only. It does not prove that
+Redox Cookbook can build or publish Cocoon.
+
 ## Manual Steps
 
 Build the capsule:
@@ -246,6 +332,17 @@ cargo xtask redoxer-smoke
 ```
 
 Run the CLI-only Redox/QEMU verify/plan smoke through Redoxer:
+
+```bash
+cargo xtask redox-qemu-gate
+```
+
+Use this required gate for CI-capable runners. For local investigation where
+Redoxer may be absent, use:
+
+```bash
+cargo xtask qemu-smoke
+```
 
 ## Redox Release Artifact
 
@@ -315,6 +412,8 @@ PASS reject run before install inside redox
 PASS reject locked capsule operations inside redox
 PASS install capsule inside redox
 PASS report installed service status inside redox
+PASS supervised service lifecycle inside redox
+PASS long-running service crash recovery lifecycle inside redox
 PASS probe Redox authority inside redox
 PASS classify Redox FD-only service launch gap inside redox
 PASS/BLOCKED probe Redox FD-only controlled service launch inside redox
@@ -326,6 +425,7 @@ PASS audit Redox authority probe receipt inside redox
 PASS redox authority probe receipt audited
 PASS audit Redox FD-only launch probe receipts inside redox
 PASS recover temporary install state inside redox
+PASS recover stale service state inside redox
 PASS reject duplicate install inside redox
 PASS reject logs before run inside redox
 PASS reject tampered latest install receipt inside redox
@@ -348,19 +448,33 @@ the log, and `cocoon status` verifies latest receipt integrity before reporting
 state. The flow also checks
 checking not-installed status, confirming check-install and run are rejected
 before install, confirming a held capsule lock blocks lifecycle operations,
-checking installed status before the first run, recovering temporary install
-state, confirming `--break-lock` clears an explicitly stale lock, confirming
-logs are rejected before a run receipt exists, confirming duplicate install is
-rejected, confirming default `cocoon run` rejects unenforced authority,
-executing the smoke run only with `--allow-unenforced-authority`, installing a
-second version, checking upgraded status before rollback, and recording the
-smoke run as `smoke-unenforced` with stdout/stderr log hashes in run
-receipt/status/audit output,
+checking installed status before the first run, checking service `start` fails
+closed without an authority acknowledgement, starting/health-checking/stopping a
+short-lived service with service lifecycle receipt audit, starting,
+health-checking, restarting, force-killing, running `recover-all`, restarting again,
+stopping, and auditing a long-running service, recovering temporary install
+state, confirming `--break-lock` clears an explicitly stale lock, recovering a
+stale service supervisor state file, confirming logs are rejected before a run
+receipt exists, confirming duplicate install is rejected, confirming default
+`cocoon run` rejects unenforced authority, executing the smoke run only with
+`--allow-unenforced-authority`, installing a second version, checking upgraded
+status before rollback, and recording the smoke run as `smoke-unenforced` with
+stdout/stderr log hashes in run receipt/status/audit output,
 rolling back to the first, auditing lifecycle receipt body hashes, confirming
 latest receipts are backed by archived receipt files, confirming
 rollback to the already-current version and to a missing version are rejected,
 and confirming a tampered installed executable is rejected by status and
 check-install before any later run can use it.
+
+Host-side service lifecycle commands now exist (`start`, `stop`, `restart`,
+and `health`) and write service lifecycle receipts. The Redoxer/QEMU smoke
+harness now includes fail-closed start, explicit acknowledged start, health,
+restart, forced crash, recover-after-crash, stop, lifecycle receipt audit,
+long-running service coverage, `recover-all` boot cleanup, and stale
+service-state recovery markers. Do not
+mark service supervision production-ready until the crash path has executed on a
+Redoxer/QEMU-capable runner, reboot recovery semantics are covered, and the
+final Redox service manager or FD-backed supervisor boundary is reviewed.
 
 Prepare an image overlay:
 
@@ -380,6 +494,7 @@ The real Redox/QEMU smoke test should eventually prove:
 
 - verify before install;
 - staged install and atomic promote;
+- supervised service start, stop, restart, health, and lifecycle receipt audit;
 - `probe-authority` proves an already-open file preopen remains readable after
   entering the Redox null namespace from a child process;
 - `probe-authority` proves denied path/scheme opens fail after the namespace

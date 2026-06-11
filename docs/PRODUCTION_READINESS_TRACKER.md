@@ -1,6 +1,6 @@
 # Cocoon Production Readiness Tracker
 
-Last updated: 2026-05-19
+Last updated: 2026-06-11
 
 ## Current Verdict
 
@@ -11,9 +11,9 @@ plan, install, status, check-install, recover, run, logs, rollback, and audit
 are exercised through the `cocoon` command on host and inside Redoxer/QEMU.
 This proves the lifecycle path, receipts, rollback evidence, and tamper checks.
 
-The remaining production blockers are full Redox service execution under
-restricted authority, production signing/trust, native Redox packaging/linking,
-and service supervision semantics.
+The remaining production blockers are default Redox service execution under
+reviewed restricted authority, native Redox packaging/linking, Redox service
+manager/reboot integration, and enforced CI production gates.
 
 ## Validation Rule
 
@@ -21,7 +21,12 @@ Current validation is CLI-only. A readiness item is not accepted unless it is
 covered by one of these commands or by a documented manual CLI transcript:
 
 ```bash
+cargo xtask prod-gate
+cargo xtask prod-audit
+cargo xtask prod-audit-strict
 cargo xtask test
+cargo xtask redox-cookbook-check
+cargo xtask redox-qemu-gate
 cargo xtask redox-smoke
 cargo xtask qemu-smoke
 ```
@@ -56,31 +61,29 @@ production-readiness item by themselves.
 | P1.2h structured child result evidence | DONE | Redox authority children and fexeced services return structured evidence that is bound into run/probe receipts instead of relying on stdout markers as the primary parsed signal. | Run/probe receipts expose `structured_child_result`; QEMU smoke validates structured evidence through probe output, `status --json`, and audit checks while keeping stdout markers as human-readable logs. | Keep as the evidence baseline for future review; do not deepen launcher assumptions before upstream alignment. |
 | P1.2i review hardening and evidence freeze | DONE | The structured evidence evaluator rejects malformed or incomplete child/service evidence and the review package records exact proof boundaries. | Unit tests reject malformed structured JSON, stdout-only PASS markers, missing launcher results, missing service-or-blocked results, and mismatched authority result kinds. | Freeze P1.2f/P1.2g/P1.2h as the community-review package; avoid new Redox launcher assumptions before review. |
 | Production signing and trust | DONE | Bundles and receipts are signed; strict mode rejects unsigned or untrusted artifacts; key rotation and trust root are documented. | Bundle signing is implemented with `cocoon keygen`, `build --signing-key`, and `verify/install --strict --trusted-key`; repeated `--trusted-key` supports explicit multi-root bundle trust windows; `cocoon trust add/list/remove` manages persistent bundle and receipt trust roots under the install root; `cocoon trust policy --require-signed-bundles --require-signed-receipts` makes strict signed bundle and receipt verification the install-root default; install/run/rollback/authority probe receipts can be signed with `--receipt-signing-key`; `status/logs/audit --require-receipt-signatures --receipt-trusted-key` require trusted receipt signatures and repeated `--receipt-trusted-key` supports receipt signer rotation windows. | Keep trust policy wired into packaging/CI profiles. |
-| Native Redox binary/package path | PARTIAL | Cocoon builds as a native Redox artifact through Redox-supported tooling and can be packaged for image integration. | `redoxer build` passes; `cargo xtask redox-package` stages a Redoxer-built `bin/cocoon`, signed capsule, production trust policy, README, and BLAKE3 release manifest under `target/redox-package/cocoon-redox`; direct Redox target binary link remains TODO without Redox C sysroot/toolchain. | Add Redox Cookbook/pkgar recipe for distribution integration. |
-| Service supervision | TODO | Installed capsules can be started, stopped, restarted, health-checked, and recovered after reboot/crash with clear receipts. | Current `run` is a CLI execution smoke, not a supervisor. | Design supervisor contract and CLI commands; add QEMU smoke for long-running service lifecycle. |
-| Policy upgrade review | PARTIAL | Upgrades show stable permission diffs and require explicit approval for dangerous expansions. | `plan` and verifier expose normalized authority; install itself does not enforce approval policy. | Add install/upgrade preflight gate for permission expansion. |
-| Machine-readable CLI contract | DONE | Core commands support stable JSON output and documented exit codes for automation. | `plan`, `install`, `run`, `probe-authority`, `probe-fd-exec`, `probe-fd-launch`, `probe-capsule-fd-launch`, `status`, `logs`, `check-install`, `rollback`, `recover`, and `audit` support `--json`; CLI golden parses JSON for `plan`, `run`, `status`, `logs`, and `audit`; `docs/CLI_CONTRACT.md` documents output and exit-code semantics. | Keep JSON fixtures stable as commands evolve. |
-| CI production gate | TODO | CI runs host gate on every change and optional Redoxer/QEMU gate on capable runners. | Local `cargo xtask test` and `cargo xtask redox-smoke` pass. | Add CI jobs with Redoxer/QEMU lane marked required where infrastructure supports it. |
-| Payload packaging alignment | PARTIAL | Payload layer converges on `pkgar` while `.cocoon` remains policy/receipt envelope. | Current payload format remains development fixture-oriented; P2a boundary report defines `pkg/pkgar` as payload owner and Cocoon as authority/audit envelope owner without changing runtime code. | Prototype pkgar-backed capsule payload only after the boundary can be preserved without disturbing P1.2g authority evidence. |
+| Native Redox binary/package path | PARTIAL | Cocoon builds as a native Redox artifact through Redox-supported tooling and can be packaged for image integration. | `cargo xtask redox-package` stages a host-built `bin/cocoon`, signed capsule, production trust policy, README, and BLAKE3 release manifest under `target/redox-package/cocoon-redox`; Redoxer-built binary staging is skipped when Redoxer is unavailable or the build fails; `cargo xtask redox-cookbook-check` validates `redox/cookbook/cocoon/recipe.toml` against tracked upstream Cookbook cargo-template/package-path conventions and stages it under `target/redox-cookbook/cookbook/recipes/tools/cocoon`; direct Redox target binary link remains TODO without Redox C sysroot/toolchain. | Test the Cookbook recipe in a full Redox checkout, then design the pkgar-backed payload fixture. |
+| Service supervision | PARTIAL | Installed capsules can be started, stopped, restarted, health-checked, and recovered after reboot/crash with clear receipts. | `cocoon start/stop/restart/health` now maintain a supervised service state file plus PID sidecar, write signed-capable service lifecycle receipts under `receipts/services`, expose supervisor state through `status`, and verify lifecycle receipts through `audit`; `recover-all` scans every installed capsule for boot-time cleanup of recoverable temporary install state and stale service supervisor state. CLI golden covers fail-closed start, explicit host-supervised start, health, restart, crash detection, recover-after-crash, aggregate reboot-style recovery, status, stop, stale-state recovery, and audit. The Redoxer/QEMU harness now stages `long-running-service` and includes start, health, restart, forced crash, `recover-all`, stop, audit, and stale service-state recovery markers when Redoxer is available. The current backend is still a host process supervisor and requires `--allow-unenforced-authority`; it is not a Redox service-manager integration. | Execute the reboot/crash recovery path on a Redoxer/QEMU-capable runner and review the Redox service manager or FD-backed supervisor boundary before marking DONE. |
+| Policy upgrade review | DONE | Upgrades show stable permission diffs and require explicit approval for dangerous expansions. | `cocoon install` compares the installed current manifest with the incoming capsule authority, applies the installed manifest's `permission_expansion_requires_confirmation` policy, rejects confirmation-required expansions by default, and accepts them only with `--allow-permission-expansion`; CLI golden and runtime regressions cover blocked and explicitly allowed upgrades with no partial version directory left behind. | Keep the install gate aligned with authority diff policy as new authority classes are added. |
+| Machine-readable CLI contract | DONE | Core commands support stable JSON output and documented exit codes for automation. | `plan`, `install`, `run`, `start`, `stop`, `restart`, `health`, `probe-authority`, `probe-fd-exec`, `probe-fd-launch`, `probe-capsule-fd-launch`, `status`, `logs`, `check-install`, `rollback`, `recover`, `recover-all`, and `audit` support `--json`; CLI golden parses JSON for `plan`, `run`, `start`, `health`, `stop`, `recover-all`, `status`, `logs`, and `audit`; `docs/CLI_CONTRACT.md` documents output and exit-code semantics. | Keep JSON fixtures stable as commands evolve. |
+| CI production gate | PARTIAL | CI runs host gate and Redoxer/QEMU gate on every change. | `.github/workflows/ci.yml` runs `cargo xtask prod-gate` and the required `cargo xtask redox-qemu-gate` on pushes to `main` and pull requests. The Redoxer/QEMU job installs QEMU, installs and initialises Redoxer, then runs the strict gate. The strict gate fails when Redoxer, QEMU, Redoxer-built package binary staging, or QEMU lifecycle execution evidence is missing. `cargo xtask prod-audit` writes `target/production-readiness/report.json` with the canonical `not-production-ready` verdict; `cargo xtask prod-audit-strict` intentionally fails until required blockers are closed. Local `cargo xtask prod-gate`, `cargo xtask test`, `cargo xtask redox-smoke`, `cargo xtask redox-package`, and skipped `cargo xtask qemu-smoke` pass. The first GitHub Actions run has not yet been observed. | Verify the first GitHub Actions run, then wire branch protection to both host and Redox-capable gates and consume the readiness JSON in CI. |
+| Payload packaging alignment | PARTIAL | Payload layer converges on `pkgar` while `.cocoon` remains policy/receipt envelope. | Current payload format remains development fixture-oriented; P2a boundary report defines `pkg/pkgar` as payload owner and Cocoon as authority/audit envelope owner. Install receipts now include a forward-compatible `payload_identity`; current development capsules record `layer = "cocoon-bundle"` and the bundle digest, leaving the same receipt slot for future `pkgar` package identity without making Cocoon own package management. | Prototype pkgar-backed capsule payload only after the boundary can be preserved without disturbing P1.2g authority evidence. |
+| Redox upstream tracking | PARTIAL | Cocoon maintains a reproducible local snapshot of the Redox references that can affect launcher, package, runtime-scheme, and Redoxer decisions. | `cargo xtask redox-track` shallow-clones or updates the tracked reference set under `target/ref-repos` and writes `target/redox-track/upstream-refs.json`; `docs/REDOX_UPSTREAM_TRACKING.md` records the review rule; `docs/reports/redox-upstream-progress-2026-06-11.md` records the current relevance/value/grantability judgement. | Consume this snapshot before changing launcher/default-enforcement/package boundaries; keep the snapshot as freshness evidence, not readiness evidence. |
 
 ## Current CLI Evidence
 
-Latest local evidence on 2026-05-19:
+Latest local evidence on 2026-06-10:
 
 ```text
-cargo fmt --all --check: PASS
-cargo test -p cocoon-cli --test cli_golden inspect_verify_and_strict_verify_outputs_are_stable -- --nocapture: PASS
-cargo test -p cocoon-cli --test cli_golden signed_bundle_trust_flow_is_cli_only -- --nocapture: PASS (signed bundles, signed receipts, multi-root rotation windows, persistent trust config, and production trust policy defaults)
-cargo test -p cocoon-cli --test cli_golden inspect_verify_and_strict_verify_outputs_are_stable -- --nocapture: PASS (`plan --json` contract)
-cargo check -p cocoon-runtime: PASS
-cargo check -p cocoon-cli: PASS
-cargo check -p cocoon-cli --target x86_64-unknown-redox: PASS
-cargo clippy --all-targets --all-features -- -D warnings: PASS
-cargo check -p xtask: PASS
-cargo xtask test: PASS
-cargo xtask qemu-smoke: PASS
-cargo xtask redox-smoke: PASS
-cargo xtask redox-package: PASS
+cargo xtask prod-gate: PASS local consolidated gate (contains explicit SKIP/BLOCKED lines for Redoxer/QEMU and direct Redox binary link on this machine)
+cargo xtask prod-audit: PASS report write with verdict not-production-ready at target/production-readiness/report.json
+cargo xtask prod-audit-strict: FAIL as expected while required production blockers remain
+cargo xtask test: PASS (fmt, checks, clippy, workspace tests, CLI golden, install permission-expansion regressions, and service lifecycle/restart/crash/reboot-style recovery regressions)
+cargo xtask redox-track: PASS (snapshot written to target/redox-track/upstream-refs.json)
+cargo xtask redox-cookbook-check: PASS local recipe validation/staging, with full Redox Cookbook build execution still BLOCKED pending a full Redox build checkout
+cargo xtask redox-qemu-gate: FAIL on this macOS host as expected because redoxer and qemu-system-x86_64 are unavailable; should PASS only on a Redoxer/QEMU-capable Linux runner
+cargo xtask redox-package: PASS (release root written; Redoxer binary staging skipped because Redoxer is unavailable or build failed)
+cargo xtask redox-smoke: PASS (host smoke builds hello-service, v2, signed, and long-running service capsules; Redox target cargo checks pass; direct Redox binary link remains BLOCKED; QEMU steps skipped because Redoxer is not installed)
+cargo xtask qemu-smoke: PASS command exit, with all Redoxer/QEMU steps skipped because Redoxer is not installed, including the long-running service crash recovery lifecycle marker
 ```
 
 Additional review-hardening evidence:
@@ -93,6 +96,7 @@ deterministic signed bundle signature tamper test: PASS
 P1.2g multi-profile FD run backend QEMU coverage: PASS
 P1.2h structured child result evidence: PASS
 P1.2i structured evidence negative tests: PASS
+long-running service crash recovery lifecycle harness: PASS/SKIP-ready pending Redoxer availability
 Redox authority community review package: docs/reports/redox-community-review-package.md
 P2a pkgar boundary report: docs/reports/p2a-pkgar-boundary.md
 ```
@@ -124,15 +128,22 @@ remain production blockers for a native Redox distribution path.
    - keep `cocoon trust policy --require-signed-bundles --require-signed-receipts`
      wired into production packaging/CI profiles.
 3. Service supervision:
-   - define process lifecycle receipts;
-   - implement start/stop/restart/status/health CLI;
-   - add reboot/crash recovery smoke.
+   - run reboot/crash recovery smoke on a Redoxer/QEMU-capable runner;
+   - review whether final Redox supervision should use Redox service manager
+     integration or the FD-backed supervisor path.
 4. Native package path:
-   - add Redox Cookbook or pkgar packaging path;
+   - refresh Redox references with `cargo xtask redox-track`;
+   - keep `cargo xtask redox-cookbook-check` green while testing the recipe in
+     a full Redox checkout;
+   - add the pkgar packaging path after the Cookbook shape is proven;
    - keep Redoxer release artifact path as the developer/native smoke path;
    - close direct link TODOs with the Redox C sysroot/toolchain.
 5. Automation contract:
    - keep JSON output stable;
+   - keep `cargo xtask prod-gate` as the CI entry point;
+   - keep `cargo xtask redox-qemu-gate` as the required Redox-capable CI lane;
+   - keep `cargo xtask prod-audit` as the canonical machine-readable readiness
+     verdict;
    - make CI consume JSON where practical.
 
 ## Production Definition

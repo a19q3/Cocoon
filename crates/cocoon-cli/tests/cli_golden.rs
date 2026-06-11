@@ -913,6 +913,386 @@ fn inspect_verify_and_strict_verify_outputs_are_stable() {
 }
 
 #[test]
+fn install_permission_expansion_requires_explicit_flag() {
+    let temp = tempfile::tempdir().expect("tempdir can be created for CLI policy test");
+    let install_root = temp.path().join("install-root");
+    let source_v1 = temp.path().join("upgrade-test-v1");
+    let source_v2 = temp.path().join("upgrade-test-v2");
+    let capsule_v1 = temp.path().join("upgrade-test-v1.cocoon");
+    let capsule_v2 = temp.path().join("upgrade-test-v2.cocoon");
+
+    write_install_fixture_source(&source_v1, "0.1.0", "");
+    write_install_fixture_source(
+        &source_v2,
+        "0.2.0",
+        r#"
+[[permission]]
+scheme = "tcp"
+action = "connect"
+target = "*"
+"#,
+    );
+
+    assert_success(
+        cocoon()
+            .args(["build"])
+            .arg(&source_v1)
+            .args(["--output"])
+            .arg(&capsule_v1)
+            .output()
+            .expect("cocoon build v1 can be executed"),
+    );
+    assert_success(
+        cocoon()
+            .args(["build"])
+            .arg(&source_v2)
+            .args(["--output"])
+            .arg(&capsule_v2)
+            .output()
+            .expect("cocoon build v2 can be executed"),
+    );
+    assert_success(
+        cocoon()
+            .args(["install"])
+            .arg(&capsule_v1)
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon install v1 can be executed"),
+    );
+
+    let blocked = assert_failure(
+        cocoon()
+            .args(["install"])
+            .arg(&capsule_v2)
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon install v2 can be blocked"),
+    );
+    let blocked_stderr = stderr(blocked);
+    assert!(
+        blocked_stderr.contains("permission expansion requires confirmation"),
+        "{blocked_stderr}"
+    );
+    assert!(
+        blocked_stderr.contains("allow tcp connect *"),
+        "{blocked_stderr}"
+    );
+    assert!(
+        !install_root
+            .join("capsules/upgrade-test/versions/0.2.0")
+            .exists()
+    );
+
+    let allowed = assert_success(
+        cocoon()
+            .args(["install"])
+            .arg(&capsule_v2)
+            .args(["--allow-permission-expansion", "--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon install v2 can be explicitly allowed"),
+    );
+
+    assert!(stdout(allowed).contains("Installed upgrade-test@0.2.0"));
+}
+
+#[test]
+fn service_lifecycle_commands_start_health_stop_and_audit() {
+    let temp = tempfile::tempdir().expect("tempdir can be created for service lifecycle test");
+    let install_root = temp.path().join("install-root");
+    let source = temp.path().join("service-test-src");
+    let capsule = temp.path().join("service-test.cocoon");
+
+    write_service_fixture_source(&source);
+
+    assert_success(
+        cocoon()
+            .args(["build"])
+            .arg(&source)
+            .args(["--output"])
+            .arg(&capsule)
+            .output()
+            .expect("cocoon build service capsule can be executed"),
+    );
+    assert_success(
+        cocoon()
+            .args(["install"])
+            .arg(&capsule)
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon install service capsule can be executed"),
+    );
+
+    let blocked_start = assert_failure(
+        cocoon()
+            .args(["start", "service-test"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon start without authority acknowledgement can be executed"),
+    );
+    let blocked_start_stderr = stderr(blocked_start);
+    assert!(
+        blocked_start_stderr.contains("service start currently lacks Redox namespace"),
+        "{blocked_start_stderr}"
+    );
+
+    let start = assert_success(
+        cocoon()
+            .args([
+                "start",
+                "service-test",
+                "--allow-unenforced-authority",
+                "--json",
+            ])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon start can be executed"),
+    );
+    let start_json: serde_json::Value =
+        serde_json::from_str(&stdout(start)).expect("start JSON is valid");
+    assert_eq!(start_json["event"], "service_start");
+    assert_eq!(start_json["body"]["action"], "start");
+    assert_eq!(start_json["body"]["authority_mode"], "smoke-unenforced");
+    assert!(start_json["body"]["pid"].is_u64());
+
+    let health = assert_success(
+        cocoon()
+            .args(["health", "service-test", "--json"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon health can be executed"),
+    );
+    let health_json: serde_json::Value =
+        serde_json::from_str(&stdout(health)).expect("health JSON is valid");
+    assert_eq!(health_json["running"], true);
+    assert_eq!(health_json["health_receipt"]["event"], "service_health");
+
+    let running_status = assert_success(
+        cocoon()
+            .args(["status", "service-test"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon status can report running service"),
+    );
+    let running_status_stdout = stdout(running_status);
+    assert!(
+        running_status_stdout.contains("Service supervisor running: true"),
+        "{running_status_stdout}"
+    );
+    assert!(
+        running_status_stdout.contains("Latest service lifecycle action: health"),
+        "{running_status_stdout}"
+    );
+
+    let restart = assert_success(
+        cocoon()
+            .args([
+                "restart",
+                "service-test",
+                "--allow-unenforced-authority",
+                "--json",
+            ])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon restart can be executed"),
+    );
+    let restart_json: serde_json::Value =
+        serde_json::from_str(&stdout(restart)).expect("restart JSON is valid");
+    assert_eq!(restart_json["stop_receipt"]["event"], "service_stop");
+    assert_eq!(restart_json["start_receipt"]["event"], "service_start");
+    assert_eq!(
+        restart_json["start_receipt"]["body"]["authority_mode"],
+        "smoke-unenforced"
+    );
+
+    let restarted_health = assert_success(
+        cocoon()
+            .args(["health", "service-test", "--json"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon health can verify restarted service"),
+    );
+    let restarted_health_json: serde_json::Value =
+        serde_json::from_str(&stdout(restarted_health)).expect("restarted health JSON is valid");
+    assert_eq!(restarted_health_json["running"], true);
+
+    let restarted_pid = restarted_health_json["state"]["pid"]
+        .as_u64()
+        .expect("restarted service state contains pid") as u32;
+    terminate_pid(restarted_pid);
+
+    let crashed_health = assert_success(
+        cocoon()
+            .args(["health", "service-test", "--json"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon health can report crashed service"),
+    );
+    let crashed_health_json: serde_json::Value =
+        serde_json::from_str(&stdout(crashed_health)).expect("crashed health JSON is valid");
+    assert_eq!(crashed_health_json["running"], false);
+    assert_eq!(
+        crashed_health_json["health_receipt"]["body"]["detail"],
+        "service state exists but process is not running"
+    );
+
+    let crashed_recover = assert_success(
+        cocoon()
+            .args(["recover-all", "--json"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon recover-all can clear crashed service state"),
+    );
+    let crashed_recover_json: serde_json::Value =
+        serde_json::from_str(&stdout(crashed_recover)).expect("recover-all JSON is valid");
+    assert_eq!(crashed_recover_json["capsules_recovered"], 1);
+    assert_eq!(crashed_recover_json["removed_paths"], 1);
+    assert_eq!(
+        crashed_recover_json["recovered"][0]["capsule_name"],
+        "service-test"
+    );
+    assert!(
+        crashed_recover_json["recovered"][0]["removed_paths"][0]
+            .as_str()
+            .expect("removed path is string")
+            .ends_with("service/state.json")
+    );
+    assert!(
+        !install_root
+            .join("capsules/service-test/service/state.json")
+            .exists()
+    );
+    assert!(
+        !install_root
+            .join("capsules/service-test/service/pid")
+            .exists()
+    );
+
+    let restart_after_crash = assert_success(
+        cocoon()
+            .args([
+                "restart",
+                "service-test",
+                "--allow-unenforced-authority",
+                "--json",
+            ])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon restart can start after crash recovery"),
+    );
+    let restart_after_crash_json: serde_json::Value =
+        serde_json::from_str(&stdout(restart_after_crash))
+            .expect("restart after crash JSON is valid");
+    assert!(restart_after_crash_json["stop_receipt"].is_null());
+    assert_eq!(
+        restart_after_crash_json["start_receipt"]["event"],
+        "service_start"
+    );
+
+    let stop = assert_success(
+        cocoon()
+            .args(["stop", "service-test", "--json"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon stop can be executed"),
+    );
+    let stop_json: serde_json::Value =
+        serde_json::from_str(&stdout(stop)).expect("stop JSON is valid");
+    assert_eq!(stop_json["event"], "service_stop");
+    assert_eq!(stop_json["body"]["action"], "stop");
+    assert!(stop_json["body"]["stdout_hash"].is_string());
+    assert!(stop_json["body"]["stderr_hash"].is_string());
+
+    let stopped_status = assert_success(
+        cocoon()
+            .args(["status", "service-test"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon status can report stopped service"),
+    );
+    let stopped_status_stdout = stdout(stopped_status);
+    assert!(
+        stopped_status_stdout.contains("Service supervisor running: false"),
+        "{stopped_status_stdout}"
+    );
+    assert!(
+        stopped_status_stdout.contains("Latest service lifecycle action: stop"),
+        "{stopped_status_stdout}"
+    );
+
+    let stale_state_path = install_root.join("capsules/service-test/service/state.json");
+    std::fs::create_dir_all(stale_state_path.parent().expect("state path has parent"))
+        .expect("stale service state directory can be created");
+    std::fs::write(
+        &stale_state_path,
+        serde_json::json!({
+            "capsule_name": "service-test",
+            "capsule_version": "0.1.0",
+            "pid": u32::MAX,
+            "command": "/app/bin/service-test",
+            "args": [],
+            "actual_args": [],
+            "authority_enforced": false,
+            "authority_mode": "smoke-unenforced",
+            "stdout_log": install_root.join("capsules/service-test/logs/stale.stdout.log").display().to_string(),
+            "stderr_log": install_root.join("capsules/service-test/logs/stale.stderr.log").display().to_string(),
+            "started_at": "unix:1",
+            "runtime_version": "0.1.0"
+        })
+        .to_string(),
+    )
+    .expect("stale service state can be written");
+    let recover = assert_success(
+        cocoon()
+            .args(["recover-all"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon recover-all can clean stale service state"),
+    );
+    let recover_stdout = stdout(recover);
+    assert!(
+        recover_stdout.contains("Recovered all capsules")
+            && recover_stdout.contains("service-test")
+            && recover_stdout.contains("service/state.json"),
+        "{recover_stdout}"
+    );
+    assert!(!stale_state_path.exists());
+
+    let audit = assert_success(
+        cocoon()
+            .args(["audit", "service-test"])
+            .args(["--install-root"])
+            .arg(&install_root)
+            .output()
+            .expect("cocoon audit can verify service lifecycle receipt"),
+    );
+    let audit_stdout = stdout(audit);
+    assert!(
+        audit_stdout.contains("latest service lifecycle receipt body hash"),
+        "{audit_stdout}"
+    );
+    assert!(
+        audit_stdout.contains("latest service lifecycle action: stop"),
+        "{audit_stdout}"
+    );
+}
+
+#[test]
 fn diff_permissions_output_is_grouped_and_stable() {
     let temp = tempfile::tempdir().expect("tempdir can be created for CLI golden test");
     let old_capsule = temp.path().join("permission-diff-v1.cocoon");
@@ -1408,6 +1788,71 @@ fn stdout(output: Output) -> String {
 
 fn stderr(output: Output) -> String {
     String::from_utf8(output.stderr).expect("CLI stderr is valid UTF-8")
+}
+
+fn write_install_fixture_source(source: &Path, version: &str, extra_manifest: &str) {
+    std::fs::create_dir_all(source.join("bin")).expect("fixture bin directory can be created");
+    std::fs::write(
+        source.join("Cocoon.toml"),
+        r#"
+[capsule]
+name = "upgrade-test"
+version = "__VERSION__"
+
+[entry]
+cmd = "/app/bin/upgrade-test"
+
+__EXTRA_MANIFEST__
+"#
+        .replace("__VERSION__", version)
+        .replace("__EXTRA_MANIFEST__", extra_manifest),
+    )
+    .expect("fixture manifest can be written");
+    let executable = source.join("bin/upgrade-test");
+    std::fs::write(&executable, b"#!/bin/sh\necho upgrade-test\n")
+        .expect("fixture executable can be written");
+    make_executable(&executable).expect("fixture executable can be made executable");
+}
+
+fn write_service_fixture_source(source: &Path) {
+    std::fs::create_dir_all(source.join("bin")).expect("service fixture bin can be created");
+    std::fs::write(
+        source.join("Cocoon.toml"),
+        r#"
+[capsule]
+name = "service-test"
+version = "0.1.0"
+
+[entry]
+cmd = "/app/bin/service-test"
+"#,
+    )
+    .expect("service fixture manifest can be written");
+    let executable = source.join("bin/service-test");
+    std::fs::write(&executable, b"#!/bin/sh\nexec sleep 30\n")
+        .expect("service fixture executable can be written");
+    make_executable(&executable).expect("service fixture executable can be made executable");
+}
+
+fn terminate_pid(pid: u32) {
+    let status = std::process::Command::new("kill")
+        .arg("-KILL")
+        .arg(pid.to_string())
+        .status()
+        .expect("kill can be executed for service fixture");
+    assert!(status.success(), "kill -KILL {pid} failed with {status}");
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) {

@@ -1,12 +1,18 @@
 # P2a pkgar Boundary Report
 
-Last updated: 2026-05-19
+Last updated: 2026-06-10
 
 ## Summary
 
 P2a is a boundary report only. It does not migrate Cocoon payloads to `pkgar`,
 does not change the `.cocoon` archive format, and does not alter the Redox
 FD-only launch backend.
+
+Update on 2026-06-10: install receipts now include a forward-compatible
+`payload_identity` field. Current development capsules record
+`layer = "cocoon-bundle"` and the bundle digest; a future `pkgar` integration
+should populate the same field with package-layer identity after `pkg/pkgar`
+has accepted the bytes.
 
 The intended long-term split is:
 
@@ -115,6 +121,11 @@ Future pkgar-backed receipts should be able to record:
 Receipt verification should not duplicate `pkgar`'s payload verifier. Cocoon
 should verify or request proof that the package layer accepted the payload, then
 record that package-layer identity in Cocoon's authority receipt chain.
+
+The current receipt slot for this is `InstallReceipt.body.payload_identity`.
+During the `.cocoon` scaffold phase it records `layer = "cocoon-bundle"` and the
+bundle digest. That is compatibility evidence only; it is not a native Redox
+package identity.
 
 ## Install Flow Direction
 

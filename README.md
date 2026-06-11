@@ -176,11 +176,42 @@ evidence path.
 
 ## Redox Smoke
 
-Prepare and run the Redox smoke artifacts:
+Run the consolidated local readiness gate:
+
+```bash
+cargo xtask prod-gate
+```
+
+The gate runs workspace checks, Redox reference tracking, Cookbook recipe
+validation/staging, package staging, and the Redox smoke scaffold. `SKIP` and
+`BLOCKED` lines remain blockers or missing environment evidence, not production
+success.
+
+The gate also writes the canonical machine-readable readiness verdict:
+
+```bash
+cargo xtask prod-audit
+```
+
+The report is written to `target/production-readiness/report.json`.
+`prod-audit-strict` intentionally exits non-zero while required production
+blockers remain.
+
+To run only the Redox smoke artifacts:
 
 ```bash
 cargo xtask redox-smoke
 ```
+
+On a Linux runner with Redoxer and QEMU installed, run the required Redox
+execution lane:
+
+```bash
+cargo xtask redox-qemu-gate
+```
+
+That gate fails if Redoxer/QEMU execution or Redoxer-built package staging is
+missing. It is the CI command for Redox-capable runners.
 
 Expected output:
 
@@ -188,7 +219,12 @@ Expected output:
 == Host smoke ==
 PASS host build cocoon
 PASS build hello-service.cocoon
+PASS build hello-service v2 capsule
+PASS build long-running-service capsule
 PASS verify capsule
+PASS generate bundle signing key
+PASS build signed capsule
+PASS strict verify signed capsule
 PASS generate runtime plan
 PASS image overlay prepared
 
@@ -227,6 +263,7 @@ structured result is now bound into the receipt body as explicit evidence.
 - [CODING_STYLE.md](docs/CODING_STYLE.md)
 - [MACOS_DEV.md](docs/MACOS_DEV.md)
 - [REDOX_TESTING.md](docs/REDOX_TESTING.md)
+- [REDOX_UPSTREAM_TRACKING.md](docs/REDOX_UPSTREAM_TRACKING.md)
 - [reports/p1.2h-structured-child-result.md](docs/reports/p1.2h-structured-child-result.md)
 - [reports/p1.2i-review-hardening.md](docs/reports/p1.2i-review-hardening.md)
 - [reports/redox-upstream-review-ask.md](docs/reports/redox-upstream-review-ask.md)

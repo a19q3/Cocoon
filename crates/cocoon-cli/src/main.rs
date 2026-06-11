@@ -80,6 +80,9 @@ enum Commands {
         /// Ed25519 signing key JSON used to sign lifecycle receipts
         #[arg(long)]
         receipt_signing_key: Option<PathBuf>,
+        /// Install an upgrade that expands declared permissions, schemes, preopens, or network defaults
+        #[arg(long)]
+        allow_permission_expansion: bool,
         /// Emit machine-readable JSON
         #[arg(long)]
         json: bool,
@@ -98,6 +101,74 @@ enum Commands {
         #[arg(long)]
         enforce_redox_authority: bool,
         /// Ed25519 signing key JSON used to sign the run receipt
+        #[arg(long)]
+        receipt_signing_key: Option<PathBuf>,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+        /// Cocoon install root
+        #[arg(long, default_value = "/pkg/cocoon")]
+        install_root: PathBuf,
+    },
+    /// Start an installed capsule as a supervised service process
+    Start {
+        /// Installed capsule name
+        capsule_name: String,
+        /// Start with the current host process supervisor even though Redox service authority is not implemented
+        #[arg(long)]
+        allow_unenforced_authority: bool,
+        /// Reserved for a future Redox-enforced service supervisor backend
+        #[arg(long)]
+        enforce_redox_authority: bool,
+        /// Ed25519 signing key JSON used to sign the service lifecycle receipt
+        #[arg(long)]
+        receipt_signing_key: Option<PathBuf>,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+        /// Cocoon install root
+        #[arg(long, default_value = "/pkg/cocoon")]
+        install_root: PathBuf,
+    },
+    /// Stop a supervised service process
+    Stop {
+        /// Installed capsule name
+        capsule_name: String,
+        /// Ed25519 signing key JSON used to sign the service lifecycle receipt
+        #[arg(long)]
+        receipt_signing_key: Option<PathBuf>,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+        /// Cocoon install root
+        #[arg(long, default_value = "/pkg/cocoon")]
+        install_root: PathBuf,
+    },
+    /// Restart a supervised service process
+    Restart {
+        /// Installed capsule name
+        capsule_name: String,
+        /// Restart with the current host process supervisor even though Redox service authority is not implemented
+        #[arg(long)]
+        allow_unenforced_authority: bool,
+        /// Reserved for a future Redox-enforced service supervisor backend
+        #[arg(long)]
+        enforce_redox_authority: bool,
+        /// Ed25519 signing key JSON used to sign service lifecycle receipts
+        #[arg(long)]
+        receipt_signing_key: Option<PathBuf>,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+        /// Cocoon install root
+        #[arg(long, default_value = "/pkg/cocoon")]
+        install_root: PathBuf,
+    },
+    /// Check supervised service process health
+    Health {
+        /// Installed capsule name
+        capsule_name: String,
+        /// Ed25519 signing key JSON used to sign the service health receipt
         #[arg(long)]
         receipt_signing_key: Option<PathBuf>,
         /// Emit machine-readable JSON
@@ -283,6 +354,15 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Clean recoverable temporary install state for every installed capsule
+    RecoverAll {
+        /// Cocoon install root
+        #[arg(long, default_value = "/pkg/cocoon")]
+        install_root: PathBuf,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Audit latest lifecycle receipts for an installed capsule
     Audit {
         /// Installed capsule name
@@ -417,6 +497,7 @@ fn main() -> Result<()> {
             strict,
             trusted_key,
             receipt_signing_key,
+            allow_permission_expansion,
             json,
             install_root,
         } => cmd_install(
@@ -425,6 +506,7 @@ fn main() -> Result<()> {
             strict,
             trusted_key,
             receipt_signing_key,
+            allow_permission_expansion,
             json,
         ),
         Commands::Run {
@@ -442,6 +524,48 @@ fn main() -> Result<()> {
             receipt_signing_key,
             json,
         ),
+        Commands::Start {
+            capsule_name,
+            allow_unenforced_authority,
+            enforce_redox_authority,
+            receipt_signing_key,
+            json,
+            install_root,
+        } => cmd_start(
+            capsule_name,
+            install_root,
+            allow_unenforced_authority,
+            enforce_redox_authority,
+            receipt_signing_key,
+            json,
+        ),
+        Commands::Stop {
+            capsule_name,
+            receipt_signing_key,
+            json,
+            install_root,
+        } => cmd_stop(capsule_name, install_root, receipt_signing_key, json),
+        Commands::Restart {
+            capsule_name,
+            allow_unenforced_authority,
+            enforce_redox_authority,
+            receipt_signing_key,
+            json,
+            install_root,
+        } => cmd_restart(
+            capsule_name,
+            install_root,
+            allow_unenforced_authority,
+            enforce_redox_authority,
+            receipt_signing_key,
+            json,
+        ),
+        Commands::Health {
+            capsule_name,
+            receipt_signing_key,
+            json,
+            install_root,
+        } => cmd_health(capsule_name, install_root, receipt_signing_key, json),
         Commands::ProbeAuthority {
             capsule_name,
             install_root,
@@ -551,6 +675,7 @@ fn main() -> Result<()> {
             install_root,
             json,
         } => cmd_recover(capsule_name, install_root, break_lock, json),
+        Commands::RecoverAll { install_root, json } => cmd_recover_all(install_root, json),
         Commands::Audit {
             capsule_name,
             require_receipt_signatures,
@@ -820,16 +945,20 @@ fn cmd_install(
     strict: bool,
     trusted_key: Vec<PathBuf>,
     receipt_signing_key: Option<PathBuf>,
+    allow_permission_expansion: bool,
     json: bool,
 ) -> Result<()> {
     let trust_config = trust_config_path(&install_root);
     let policy = verification_policy(strict, &trusted_key, Some(&trust_config))?;
     let receipt_signing = receipt_signing_options(receipt_signing_key.as_deref())?;
-    let receipt = cocoon_runtime::install_capsule_with_policy_and_receipt_signing(
+    let receipt = cocoon_runtime::install_capsule_with_options_policy_and_receipt_signing(
         &capsule,
         &install_root,
         policy,
         receipt_signing,
+        cocoon_runtime::InstallOptions {
+            allow_permission_expansion,
+        },
     )
     .with_context(|| format!("failed to install capsule '{}'", capsule.display()))?;
     if json {
@@ -864,6 +993,106 @@ fn cmd_run(
         print_json(&receipt)?;
     } else {
         println!("{}", format_run_receipt(&receipt));
+    }
+    Ok(())
+}
+
+fn cmd_start(
+    capsule_name: String,
+    install_root: PathBuf,
+    allow_unenforced_authority: bool,
+    enforce_redox_authority: bool,
+    receipt_signing_key: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let capsule_name = cocoon_core::CapsuleName::parse(capsule_name)?;
+    let receipt_signing = receipt_signing_options(receipt_signing_key.as_deref())?;
+    let receipt = cocoon_runtime::start_service_with_options_and_receipt_signing(
+        &capsule_name,
+        &install_root,
+        cocoon_runtime::ServiceOptions {
+            allow_unenforced_authority,
+            enforce_redox_authority,
+        },
+        receipt_signing,
+    )
+    .with_context(|| format!("failed to start service '{capsule_name}'"))?;
+    if json {
+        print_json(&receipt)?;
+    } else {
+        println!("{}", format_service_lifecycle_receipt(&receipt));
+    }
+    Ok(())
+}
+
+fn cmd_stop(
+    capsule_name: String,
+    install_root: PathBuf,
+    receipt_signing_key: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let capsule_name = cocoon_core::CapsuleName::parse(capsule_name)?;
+    let receipt_signing = receipt_signing_options(receipt_signing_key.as_deref())?;
+    let receipt = cocoon_runtime::stop_service_with_receipt_signing(
+        &capsule_name,
+        &install_root,
+        receipt_signing,
+    )
+    .with_context(|| format!("failed to stop service '{capsule_name}'"))?;
+    if json {
+        print_json(&receipt)?;
+    } else {
+        println!("{}", format_service_lifecycle_receipt(&receipt));
+    }
+    Ok(())
+}
+
+fn cmd_restart(
+    capsule_name: String,
+    install_root: PathBuf,
+    allow_unenforced_authority: bool,
+    enforce_redox_authority: bool,
+    receipt_signing_key: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let capsule_name = cocoon_core::CapsuleName::parse(capsule_name)?;
+    let receipt_signing = receipt_signing_options(receipt_signing_key.as_deref())?;
+    let report = cocoon_runtime::restart_service_with_options_and_receipt_signing(
+        &capsule_name,
+        &install_root,
+        cocoon_runtime::ServiceOptions {
+            allow_unenforced_authority,
+            enforce_redox_authority,
+        },
+        receipt_signing,
+    )
+    .with_context(|| format!("failed to restart service '{capsule_name}'"))?;
+    if json {
+        print_json(&service_restart_report_json(&report))?;
+    } else {
+        println!("{}", format_service_restart_report(&report));
+    }
+    Ok(())
+}
+
+fn cmd_health(
+    capsule_name: String,
+    install_root: PathBuf,
+    receipt_signing_key: Option<PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let capsule_name = cocoon_core::CapsuleName::parse(capsule_name)?;
+    let receipt_signing = receipt_signing_options(receipt_signing_key.as_deref())?;
+    let report = cocoon_runtime::service_health_with_receipt_signing(
+        &capsule_name,
+        &install_root,
+        receipt_signing,
+    )
+    .with_context(|| format!("failed to check service health for '{capsule_name}'"))?;
+    if json {
+        print_json(&service_health_report_json(&report))?;
+    } else {
+        println!("{}", format_service_health_report(&report));
     }
     Ok(())
 }
@@ -1110,6 +1339,17 @@ fn cmd_recover(
     Ok(())
 }
 
+fn cmd_recover_all(install_root: PathBuf, json: bool) -> Result<()> {
+    let report = cocoon_runtime::recover_all_capsules(&install_root)
+        .with_context(|| "failed to recover all capsules")?;
+    if json {
+        print_json(&recovery_all_report_json(&report))?;
+    } else {
+        println!("{}", format_recovery_all_report(&report));
+    }
+    Ok(())
+}
+
 fn cmd_audit(
     capsule_name: String,
     install_root: PathBuf,
@@ -1352,6 +1592,7 @@ fn status_report_json(status: &cocoon_runtime::ServiceStatusReport) -> serde_jso
         "latest_fd_launch_probe_receipt": status.latest_fd_launch_probe_receipt,
         "latest_capsule_fd_launch_probe_receipt": status.latest_capsule_fd_launch_probe_receipt,
         "latest_rollback_receipt": status.latest_rollback_receipt,
+        "service_supervisor": status.service_supervisor.as_ref().map(service_supervisor_status_json),
     })
 }
 
@@ -1359,6 +1600,33 @@ fn latest_logs_json(logs: &cocoon_runtime::LatestLogs) -> serde_json::Value {
     serde_json::json!({
         "stdout": logs.stdout,
         "stderr": logs.stderr,
+    })
+}
+
+fn service_supervisor_status_json(
+    status: &cocoon_runtime::ServiceSupervisorStatus,
+) -> serde_json::Value {
+    serde_json::json!({
+        "running": status.running,
+        "state": status.state,
+        "latest_receipt": status.latest_receipt,
+    })
+}
+
+fn service_health_report_json(report: &cocoon_runtime::ServiceHealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "capsule_name": report.capsule_name,
+        "running": report.running,
+        "state": report.state,
+        "latest_receipt": report.latest_receipt,
+        "health_receipt": report.health_receipt,
+    })
+}
+
+fn service_restart_report_json(report: &cocoon_runtime::ServiceRestartReport) -> serde_json::Value {
+    serde_json::json!({
+        "stop_receipt": report.stop_receipt,
+        "start_receipt": report.start_receipt,
     })
 }
 
@@ -1389,6 +1657,22 @@ fn recovery_report_json(report: &cocoon_runtime::RecoveryReport) -> serde_json::
         "capsule_name": report.capsule_name,
         "broke_lock": report.broke_lock,
         "removed_paths": report.removed_paths,
+    })
+}
+
+fn recovery_all_report_json(report: &cocoon_runtime::RecoveryAllReport) -> serde_json::Value {
+    serde_json::json!({
+        "recovered": report
+            .recovered
+            .iter()
+            .map(recovery_report_json)
+            .collect::<Vec<_>>(),
+        "capsules_recovered": report.recovered.len(),
+        "removed_paths": report
+            .recovered
+            .iter()
+            .map(|report| report.removed_paths.len())
+            .sum::<usize>(),
     })
 }
 
@@ -1652,6 +1936,13 @@ fn format_install_receipt(receipt: &cocoon_runtime::InstallReceipt) -> String {
     lines.push(format!("Install root: {}", receipt.body.install_root));
     lines.push(format!("Manifest hash: {}", receipt.body.manifest_hash));
     lines.push(format!("Bundle hash: {}", receipt.body.bundle_hash));
+    if let Some(identity) = &receipt.body.payload_identity {
+        lines.push(format!(
+            "Payload identity: {} {}@{} {}",
+            identity.layer, identity.name, identity.version, identity.digest
+        ));
+        lines.push(format!("Payload verifier: {}", identity.verifier));
+    }
     lines.push(format!("Permission hash: {}", receipt.body.permission_hash));
     lines.push(format!("Installed at: {}", receipt.body.installed_at));
     lines.push(format!(
@@ -1741,6 +2032,109 @@ fn format_run_receipt(receipt: &cocoon_runtime::RunReceipt) -> String {
     lines.join("\n")
 }
 
+fn format_service_lifecycle_receipt(receipt: &cocoon_runtime::ServiceLifecycleReceipt) -> String {
+    let mut lines = Vec::new();
+
+    lines.push(format!(
+        "Service {} {}",
+        receipt.body.action, receipt.body.capsule_name
+    ));
+    lines.push(format!("Event: {}", receipt.event));
+    lines.push(format!(
+        "Version: {}",
+        receipt
+            .body
+            .capsule_version
+            .as_deref()
+            .unwrap_or("<unknown>")
+    ));
+    lines.push(format!(
+        "PID: {}",
+        receipt
+            .body
+            .pid
+            .map(|pid| pid.to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    ));
+    lines.push(format!(
+        "Authority enforced: {}",
+        receipt.body.authority_enforced
+    ));
+    lines.push(format!("Authority mode: {}", receipt.body.authority_mode));
+    lines.push(format!("Success: {}", receipt.body.success));
+    lines.push(format!("Detail: {}", receipt.body.detail));
+    if let Some(stdout_log) = &receipt.body.stdout_log {
+        lines.push(format!("Stdout log: {stdout_log}"));
+    }
+    if let Some(stdout_hash) = &receipt.body.stdout_hash {
+        lines.push(format!("Stdout hash: {stdout_hash}"));
+    }
+    if let Some(stderr_log) = &receipt.body.stderr_log {
+        lines.push(format!("Stderr log: {stderr_log}"));
+    }
+    if let Some(stderr_hash) = &receipt.body.stderr_hash {
+        lines.push(format!("Stderr hash: {stderr_hash}"));
+    }
+    lines.push(format!("Occurred at: {}", receipt.body.occurred_at));
+    lines.push(format!("Body hash: {}", receipt.body_hash));
+    lines.push(format!(
+        "Signature: {}",
+        format_signature(&receipt.signature)
+    ));
+
+    lines.join("\n")
+}
+
+fn format_service_health_report(report: &cocoon_runtime::ServiceHealthReport) -> String {
+    let mut lines = Vec::new();
+
+    lines.push(format!("Health for {}", report.capsule_name));
+    lines.push(format!("Running: {}", report.running));
+    if let Some(state) = &report.state {
+        lines.push(format!("PID: {}", state.pid));
+        lines.push(format!("Authority mode: {}", state.authority_mode));
+        lines.push(format!("Started at: {}", state.started_at));
+    } else {
+        lines.push("PID: <none>".to_string());
+    }
+    lines.push(format!(
+        "Health receipt: {}",
+        report.health_receipt.body_hash
+    ));
+    lines.push(format!(
+        "Health detail: {}",
+        report.health_receipt.body.detail
+    ));
+
+    lines.join("\n")
+}
+
+fn format_service_restart_report(report: &cocoon_runtime::ServiceRestartReport) -> String {
+    let mut lines = Vec::new();
+
+    lines.push(format!(
+        "Restarted {}",
+        report.start_receipt.body.capsule_name
+    ));
+    if let Some(stop_receipt) = &report.stop_receipt {
+        lines.push(format!("Stop receipt: {}", stop_receipt.body_hash));
+    } else {
+        lines.push("Stop receipt: <none>".to_string());
+    }
+    lines.push(format!("Start receipt: {}", report.start_receipt.body_hash));
+    lines.push(format!(
+        "PID: {}",
+        report
+            .start_receipt
+            .body
+            .pid
+            .map(|pid| pid.to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    ));
+
+    lines.join("\n")
+}
+
 fn format_rollback_receipt(receipt: &cocoon_runtime::RollbackReceipt) -> String {
     let mut lines = Vec::new();
 
@@ -1815,6 +2209,43 @@ fn format_status_report(status: &cocoon_runtime::ServiceStatusReport) -> String 
         ));
     } else {
         lines.push("Latest run receipt: <none>".to_string());
+    }
+
+    if let Some(supervisor) = &status.service_supervisor {
+        lines.push(format!(
+            "Service supervisor running: {}",
+            supervisor.running
+        ));
+        if let Some(state) = &supervisor.state {
+            lines.push(format!("Service supervisor pid: {}", state.pid));
+            lines.push(format!(
+                "Service supervisor authority mode: {}",
+                state.authority_mode
+            ));
+            lines.push(format!("Service supervisor stdout: {}", state.stdout_log));
+            lines.push(format!("Service supervisor stderr: {}", state.stderr_log));
+        } else {
+            lines.push("Service supervisor pid: <none>".to_string());
+        }
+        if let Some(receipt) = &supervisor.latest_receipt {
+            lines.push(format!(
+                "Latest service lifecycle receipt: {}",
+                receipt.body_hash
+            ));
+            lines.push(format!(
+                "Latest service lifecycle action: {}",
+                receipt.body.action
+            ));
+            lines.push(format!(
+                "Latest service lifecycle success: {}",
+                receipt.body.success
+            ));
+        } else {
+            lines.push("Latest service lifecycle receipt: <none>".to_string());
+        }
+    } else {
+        lines.push("Service supervisor running: false".to_string());
+        lines.push("Latest service lifecycle receipt: <none>".to_string());
     }
 
     if let Some(receipt) = &status.latest_authority_probe_receipt {
@@ -2120,6 +2551,26 @@ fn format_recovery_report(report: &cocoon_runtime::RecoveryReport) -> String {
     lines.join("\n")
 }
 
+fn format_recovery_all_report(report: &cocoon_runtime::RecoveryAllReport) -> String {
+    let removed_paths = report
+        .recovered
+        .iter()
+        .map(|report| report.removed_paths.len())
+        .sum::<usize>();
+    let mut lines = vec![
+        "Recovered all capsules".to_string(),
+        format!("Capsules recovered: {}", report.recovered.len()),
+        format!("Removed paths: {removed_paths}"),
+    ];
+    for capsule_report in &report.recovered {
+        lines.push(format!("  Recovered {}", capsule_report.capsule_name));
+        for path in &capsule_report.removed_paths {
+            lines.push(format!("    {path}"));
+        }
+    }
+    lines.join("\n")
+}
+
 fn format_audit_report(report: &cocoon_runtime::AuditReport) -> String {
     let mut lines = vec![
         format!("Audit passed for {}", report.capsule_name),
@@ -2222,6 +2673,13 @@ mod tests {
                 capsule_version: "0.1.0".to_string(),
                 manifest_hash: "blake3:manifest".to_string(),
                 bundle_hash: "blake3:bundle".to_string(),
+                payload_identity: Some(cocoon_runtime::PayloadIdentity {
+                    layer: "cocoon-bundle".to_string(),
+                    name: "hello-service".to_string(),
+                    version: "0.1.0".to_string(),
+                    digest: "blake3:bundle".to_string(),
+                    verifier: "cocoon-bundle hash manifest".to_string(),
+                }),
                 permission_hash: "blake3:permission".to_string(),
                 installed_at: "unix:1".to_string(),
                 install_root: "/pkg/cocoon/capsules/hello-service/versions/0.1.0".to_string(),
@@ -2235,6 +2693,10 @@ mod tests {
 
         assert!(output.contains("Installed hello-service@0.1.0"));
         assert!(output.contains("Event: capsule_install"));
+        assert!(
+            output.contains("Payload identity: cocoon-bundle hello-service@0.1.0 blake3:bundle")
+        );
+        assert!(output.contains("Payload verifier: cocoon-bundle hash manifest"));
         assert!(output.contains("Previous receipt: <none>"));
         assert!(output.contains("Signature: <none>"));
     }
@@ -2303,6 +2765,13 @@ mod tests {
                 capsule_version: "0.1.0".to_string(),
                 manifest_hash: "blake3:manifest".to_string(),
                 bundle_hash: "blake3:bundle".to_string(),
+                payload_identity: Some(cocoon_runtime::PayloadIdentity {
+                    layer: "cocoon-bundle".to_string(),
+                    name: "hello-service".to_string(),
+                    version: "0.1.0".to_string(),
+                    digest: "blake3:bundle".to_string(),
+                    verifier: "cocoon-bundle hash manifest".to_string(),
+                }),
                 permission_hash: "blake3:permission".to_string(),
                 installed_at: "unix:1".to_string(),
                 install_root: "/pkg/cocoon/capsules/hello-service/versions/0.1.0".to_string(),
@@ -2359,6 +2828,7 @@ mod tests {
             latest_fd_launch_probe_receipt: None,
             latest_capsule_fd_launch_probe_receipt: None,
             latest_rollback_receipt: None,
+            service_supervisor: None,
         };
         let output = format_status_report(&status);
 
@@ -2585,6 +3055,25 @@ mod tests {
         assert!(output.contains("Broke lock: true"));
         assert!(output.contains("Removed paths: 2"));
         assert!(output.contains("hello-service-0.1.0-abandoned"));
+    }
+
+    #[test]
+    fn formats_recovery_all_report_output() {
+        let output = format_recovery_all_report(&cocoon_runtime::RecoveryAllReport {
+            recovered: vec![cocoon_runtime::RecoveryReport {
+                capsule_name: "hello-service".to_string(),
+                broke_lock: false,
+                removed_paths: vec![
+                    "/pkg/cocoon/capsules/hello-service/service/state.json".to_string(),
+                ],
+            }],
+        });
+
+        assert!(output.contains("Recovered all capsules"));
+        assert!(output.contains("Capsules recovered: 1"));
+        assert!(output.contains("Removed paths: 1"));
+        assert!(output.contains("Recovered hello-service"));
+        assert!(output.contains("service/state.json"));
     }
 
     #[test]

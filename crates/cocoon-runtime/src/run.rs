@@ -386,7 +386,7 @@ fn enforce_run_authority(options: RunOptions) -> Result<()> {
     ))
 }
 
-fn read_installed_manifest(current_root: &Path) -> Result<CapsuleManifest> {
+pub(crate) fn read_installed_manifest(current_root: &Path) -> Result<CapsuleManifest> {
     let manifest_text = fs::read_to_string(current_root.join(cocoon_bundle::MANIFEST_NAME))?;
     Ok(CapsuleManifest::from_toml(&manifest_text)?)
 }
@@ -449,7 +449,7 @@ fn is_generated_metadata(path: &str) -> bool {
 }
 
 #[cfg(unix)]
-fn verify_executable(path: &Path) -> Result<()> {
+pub(crate) fn verify_executable(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let mode = fs::metadata(path)?.permissions().mode();
@@ -463,7 +463,7 @@ fn verify_executable(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn verify_executable(path: &Path) -> Result<()> {
+pub(crate) fn verify_executable(path: &Path) -> Result<()> {
     if !path.exists() {
         return Err(RuntimeError::InstalledIntegrity(format!(
             "entrypoint '{}' is missing",
@@ -493,7 +493,7 @@ fn run_entry(executable: &Path, args: &[String], cwd: &Path) -> Result<Output> {
     }
 }
 
-fn absolute_process_path(path: &Path) -> Result<PathBuf> {
+pub(crate) fn absolute_process_path(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
     }
@@ -506,7 +506,7 @@ fn is_script(path: &Path) -> Result<bool> {
     Ok(bytes.starts_with(b"#!"))
 }
 
-fn map_guest_path(
+pub(crate) fn map_guest_path(
     current_root: &Path,
     filesystem_root: &GuestPath,
     guest_path: &GuestPath,

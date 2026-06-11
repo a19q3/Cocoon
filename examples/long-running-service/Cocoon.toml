@@ -1,0 +1,28 @@
+[capsule]
+name = "long-running-service"
+version = "0.1.0"
+description = "Long-running Cocoon service lifecycle fixture"
+authors = ["Arthur Tsang"]
+license = "MIT"
+
+[entry]
+cmd = "/app/bin/long-running-service"
+args = []
+cwd = "/app"
+
+[filesystem]
+root = "/app"
+
+[[preopen]]
+scheme = "file"
+host_path = "/pkg/cocoon/capsules/long-running-service/current"
+guest_path = "/app"
+rights = ["read", "execute"]
+
+[network]
+default = "deny"
+
+[audit]
+events = true
+stdout = true
+stderr = true

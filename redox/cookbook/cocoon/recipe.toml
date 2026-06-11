@@ -1,0 +1,13 @@
+# Draft Redox Cookbook recipe for Cocoon.
+#
+# This is not an upstream recipe yet. It exists to keep Cocoon's native Redox
+# packaging path aligned with Cookbook conventions while the pkgar payload split
+# is still being designed.
+
+[source]
+git = "https://github.com/a19q3/Cocoon.git"
+branch = "main"
+
+[build]
+template = "cargo"
+package_path = "crates/cocoon-cli"
